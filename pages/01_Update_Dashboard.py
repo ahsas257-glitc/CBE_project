@@ -8,7 +8,7 @@ from theme.theme import apply_theme, asset_path
 
 st.set_page_config(page_title="CBE Dashboard Updater", layout="wide")
 st.title("CBE Dashboard Updater")
-
+apply_theme()
 st.markdown(
     """
     This application has been developed under the **UNICEF CBE Project** as part of 
