@@ -6,9 +6,41 @@ from pathlib import Path
 
 st.set_page_config(page_title="SurveyCTO Access", layout="wide")
 
-BASE_DIR = Path(__file__).resolve().parents[1]
-header_path = BASE_DIR /"theme"/ "assets" / "surveycto_cover.jpg"
-cover_path = BASE_DIR /"theme"/ "assets" / "generic-post-image.jpg"
+THIS_FILE = Path(__file__).resolve()
+
+candidates = [
+    THIS_FILE.parents[0],
+    THIS_FILE.parents[1],
+    THIS_FILE.parents[2],
+    THIS_FILE.parents[3],
+]
+
+base_dir = None
+for p in candidates:
+    if (p / "theme" / "assets").exists():
+        base_dir = p
+        break
+
+if base_dir is None:
+    st.error("theme/assets folder not found in expected locations.")
+    st.write("Current file:", str(THIS_FILE))
+    for i, p in enumerate(candidates):
+        st.write(f"Candidate {i}:", str(p))
+        st.write("Exists:", (p / "theme" / "assets").exists())
+    st.stop()
+
+header_path = base_dir / "theme" / "assets" / "surveycto_cover.jpg"
+cover_path = base_dir / "theme" / "assets" / "generic-post-image.jpg"
+
+if not header_path.exists():
+    st.error(f"Header image not found: {header_path}")
+    st.write("Assets files:", [x.name for x in (base_dir / "theme" / "assets").glob("*")])
+    st.stop()
+
+if not cover_path.exists():
+    st.error(f"Cover image not found: {cover_path}")
+    st.write("Assets files:", [x.name for x in (base_dir / "theme" / "assets").glob("*")])
+    st.stop()
 
 header_img = Image.open(header_path)
 st.image(header_img, use_container_width=True)
