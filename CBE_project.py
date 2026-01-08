@@ -1,6 +1,9 @@
 import streamlit as st
 from PIL import Image
 from pathlib import Path
+from theme.theme import apply_theme
+apply_theme()
+
 
 st.set_page_config(page_title="Welcome | CBE Dashboard", layout="wide")
 
