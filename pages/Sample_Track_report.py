@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
+from theme.theme import apply_theme
+apply_theme()
 
 st.set_page_config(page_title="Auto Report Dashboard", layout="wide")
 
