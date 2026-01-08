@@ -1,0 +1,108 @@
+/* ---------- Base: light + black text ---------- */
+:root{
+  --text: #0b0f14;
+  --muted: #2a3340;
+  --glass: rgba(255,255,255,0.55);
+  --glass2: rgba(255,255,255,0.35);
+  --border: rgba(10,15,20,0.10);
+  --shadow: 0 18px 45px rgba(10, 15, 20, 0.10);
+}
+
+html, body, [class*="css"]{
+  color: var(--text) !important;
+}
+
+.stApp{
+  background: radial-gradient(900px 500px at 20% 10%, rgba(120, 215, 255, 0.25), transparent 60%),
+              radial-gradient(800px 500px at 80% 30%, rgba(255, 180, 220, 0.22), transparent 55%),
+              radial-gradient(700px 450px at 50% 85%, rgba(190, 255, 210, 0.18), transparent 60%),
+              linear-gradient(180deg, #fbfdff 0%, #f4f7fb 50%, #ffffff 100%);
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* ---------- Animated "liquid" blobs (background) ---------- */
+.stApp::before,
+.stApp::after{
+  content: "";
+  position: fixed;
+  z-index: 0;
+  inset: -200px;
+  pointer-events: none;
+  filter: blur(55px);
+  opacity: 0.75;
+  transform: translate3d(0,0,0);
+}
+
+.stApp::before{
+  background:
+    radial-gradient(circle at 20% 25%, rgba(90, 200, 255, 0.55) 0%, transparent 45%),
+    radial-gradient(circle at 75% 20%, rgba(255, 160, 205, 0.50) 0%, transparent 48%),
+    radial-gradient(circle at 55% 78%, rgba(160, 255, 200, 0.45) 0%, transparent 52%);
+  animation: floaty1 12s ease-in-out infinite;
+}
+.stApp::after{
+  background:
+    radial-gradient(circle at 25% 70%, rgba(255, 210, 120, 0.35) 0%, transparent 55%),
+    radial-gradient(circle at 85% 65%, rgba(160, 170, 255, 0.35) 0%, transparent 55%);
+  animation: floaty2 16s ease-in-out infinite;
+}
+
+@keyframes floaty1{
+  0%   { transform: translate(-1.5%, -1.0%) scale(1.00); }
+  50%  { transform: translate( 1.0%,  1.5%) scale(1.05); }
+  100% { transform: translate(-1.5%, -1.0%) scale(1.00); }
+}
+@keyframes floaty2{
+  0%   { transform: translate( 1.2%,  1.0%) scale(1.02); }
+  50%  { transform: translate(-1.0%, -1.4%) scale(1.06); }
+  100% { transform: translate( 1.2%,  1.0%) scale(1.02); }
+}
+
+/* ---------- Make Streamlit content above the blobs ---------- */
+.block-container{
+  position: relative;
+  z-index: 1;
+  padding-top: 1.2rem;
+}
+
+/* ---------- Glass card ---------- */
+.glass{
+  background: linear-gradient(135deg, var(--glass), var(--glass2));
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  border-radius: 22px;
+  padding: 18px 18px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* subtle animated shine */
+.glass::after{
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 22px;
+  background: linear-gradient(120deg,
+      transparent 0%,
+      rgba(255,255,255,0.55) 18%,
+      transparent 35%);
+  transform: translateX(-120%);
+  animation: shine 6.5s ease-in-out infinite;
+  pointer-events: none;
+  opacity: 0.55;
+}
+@keyframes shine{
+  0%, 55% { transform: translateX(-120%); }
+  100%    { transform: translateX(120%); }
+}
+
+/* ---------- Typography ---------- */
+h1, h2, h3, h4, h5, h6, p, li, span{
+  color: var(--text) !important;
+}
+.small-muted{ color: var(--muted) !important; }
+
+/* ---------- Hide Streamlit default menu/footer (optional) ---------- */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
