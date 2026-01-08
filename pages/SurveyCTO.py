@@ -7,8 +7,8 @@ from pathlib import Path
 st.set_page_config(page_title="SurveyCTO Access", layout="wide")
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-header_path = BASE_DIR / "assets" / "surveycto_cover.jpg"
-cover_path = BASE_DIR / "assets" / "generic-post-image.jpg"
+header_path = BASE_DIR /"theme"/ "assets" / "surveycto_cover.jpg"
+cover_path = BASE_DIR /"theme"/ "assets" / "generic-post-image.jpg"
 
 header_img = Image.open(header_path)
 st.image(header_img, use_container_width=True)
