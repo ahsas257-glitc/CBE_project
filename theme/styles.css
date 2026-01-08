@@ -1,143 +1,129 @@
-import streamlit as st
+:root{
+  --sky:#00A6D6;
+  --text:#111111;
+  --glass-bg: rgba(255, 255, 255, 0.62);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.08);
+}
 
-def apply_liquid_glass_theme():
-    st.markdown(
-        """
-        <style>
-        :root{
-          --sky:#00A6D6;
-          --text:#111111;
-          --muted:#2b2b2b;
-          --glass-bg: rgba(255, 255, 255, 0.55);
-          --glass-border: rgba(0, 0, 0, 0.08);
-          --shadow: 0 18px 50px rgba(0, 0, 0, 0.08);
-        }
+html, body, [data-testid="stAppViewContainer"]{
+  background: #fbfcff !important;
+  color: var(--text) !important;
+}
 
-        html, body, [data-testid="stAppViewContainer"]{
-          background: #fbfcff !important;
-          color: var(--text) !important;
-        }
+[data-testid="stAppViewContainer"]{
+  position: relative;
+  overflow: hidden;
+}
 
-        [data-testid="stAppViewContainer"]{
-          position: relative;
-          overflow: hidden;
-        }
+[data-testid="stAppViewContainer"]::before,
+[data-testid="stAppViewContainer"]::after{
+  content:"";
+  position:absolute;
+  inset:-25vh -25vw;
+  background:
+    radial-gradient(45rem 45rem at 20% 30%, rgba(0,166,214,0.18), transparent 60%),
+    radial-gradient(40rem 40rem at 80% 20%, rgba(255,160,200,0.12), transparent 60%),
+    radial-gradient(55rem 55rem at 70% 80%, rgba(120,210,255,0.16), transparent 60%),
+    radial-gradient(45rem 45rem at 15% 85%, rgba(190,240,255,0.18), transparent 60%);
+  filter: blur(16px);
+  z-index: 0;
+  animation: floaty 14s ease-in-out infinite alternate;
+  pointer-events:none;
+}
 
-        [data-testid="stAppViewContainer"]::before,
-        [data-testid="stAppViewContainer"]::after{
-          content:"";
-          position:absolute;
-          inset:-25vh -25vw;
-          background:
-            radial-gradient(45rem 45rem at 20% 30%, rgba(0,166,214,0.18), transparent 60%),
-            radial-gradient(40rem 40rem at 80% 20%, rgba(255,160,200,0.14), transparent 60%),
-            radial-gradient(55rem 55rem at 70% 80%, rgba(120,210,255,0.16), transparent 60%),
-            radial-gradient(45rem 45rem at 15% 85%, rgba(190,240,255,0.18), transparent 60%);
-          filter: blur(10px);
-          z-index: 0;
-          animation: floaty 14s ease-in-out infinite alternate;
-          pointer-events:none;
-        }
+[data-testid="stAppViewContainer"]::after{
+  animation-duration: 18s;
+  opacity: 0.9;
+  filter: blur(22px);
+}
 
-        [data-testid="stAppViewContainer"]::after{
-          animation-duration: 18s;
-          opacity: 0.9;
-          filter: blur(16px);
-        }
+@keyframes floaty{
+  0%   { transform: translate3d(-1.5%, -1.0%, 0) scale(1.00); }
+  50%  { transform: translate3d( 1.2%,  1.6%, 0) scale(1.03); }
+  100% { transform: translate3d(-0.8%,  0.6%, 0) scale(1.01); }
+}
 
-        @keyframes floaty{
-          0%   { transform: translate3d(-1.5%, -1.0%, 0) scale(1.00); }
-          50%  { transform: translate3d( 1.2%,  1.6%, 0) scale(1.03); }
-          100% { transform: translate3d(-0.8%,  0.6%, 0) scale(1.01); }
-        }
+section.main > div{
+  position: relative;
+  z-index: 1;
+}
 
-        section.main > div{
-          position: relative;
-          z-index: 1;
-        }
+.block-container{
+  padding-top: 2.2rem !important;
+  padding-bottom: 2.2rem !important;
+}
 
-        .block-container{
-          padding-top: 2.2rem !important;
-          padding-bottom: 2.2rem !important;
-        }
+h1, h2, h3, h4, h5, h6{
+  color: var(--sky) !important;
+  letter-spacing: 0.2px;
+}
 
-        h1, h2, h3, h4, h5, h6{
-          color: var(--sky) !important;
-          letter-spacing: 0.2px;
-        }
+p, li, span, div, label{
+  color: var(--text) !important;
+}
 
-        p, li, span, div, label{
-          color: var(--text) !important;
-        }
+[data-testid="stSidebar"]{
+  background: rgba(255,255,255,0.72) !important;
+  border-right: 1px solid var(--glass-border) !important;
+  backdrop-filter: blur(16px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(160%) !important;
+}
 
-        [data-testid="stSidebar"]{
-          background: rgba(255,255,255,0.70) !important;
-          border-right: 1px solid var(--glass-border) !important;
-          backdrop-filter: blur(14px) saturate(160%) !important;
-          -webkit-backdrop-filter: blur(14px) saturate(160%) !important;
-        }
+[data-testid="stHeader"]{
+  background: rgba(255,255,255,0.38) !important;
+  backdrop-filter: blur(12px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(160%) !important;
+  border-bottom: 1px solid rgba(0,0,0,0.06) !important;
+}
 
-        [data-testid="stHeader"]{
-          background: rgba(255,255,255,0.35) !important;
-          backdrop-filter: blur(10px) saturate(160%) !important;
-          -webkit-backdrop-filter: blur(10px) saturate(160%) !important;
-          border-bottom: 1px solid rgba(0,0,0,0.06) !important;
-        }
+.stButton > button, .stDownloadButton > button{
+  background: linear-gradient(135deg, rgba(0,166,214,0.98), rgba(0,150,255,0.86)) !important;
+  color: white !important;
+  border: 1px solid rgba(255,255,255,0.35) !important;
+  border-radius: 16px !important;
+  padding: 0.68rem 1rem !important;
+  box-shadow: 0 16px 40px rgba(0,166,214,0.18) !important;
+  transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+}
 
-        [data-testid="stToolbar"]{ color: var(--text) !important; }
+.stButton > button:hover, .stDownloadButton > button:hover{
+  transform: translateY(-1px);
+  filter: brightness(1.02);
+  box-shadow: 0 20px 55px rgba(0,166,214,0.22) !important;
+}
 
-        .stButton > button, .stDownloadButton > button{
-          background: linear-gradient(135deg, rgba(0,166,214,0.95), rgba(0,150,255,0.85)) !important;
-          color: white !important;
-          border: 1px solid rgba(255,255,255,0.35) !important;
-          border-radius: 14px !important;
-          padding: 0.65rem 1rem !important;
-          box-shadow: 0 14px 35px rgba(0,166,214,0.18) !important;
-          transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
-        }
-        .stButton > button:hover, .stDownloadButton > button:hover{
-          transform: translateY(-1px);
-          filter: brightness(1.02);
-          box-shadow: 0 18px 45px rgba(0,166,214,0.22) !important;
-        }
+.stTextInput input, .stTextArea textarea, .stSelectbox div, .stMultiSelect div, .stDateInput input, .stFileUploader{
+  background: var(--glass-bg) !important;
+  border: 1px solid var(--glass-border) !important;
+  border-radius: 16px !important;
+  backdrop-filter: blur(16px) saturate(170%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(170%) !important;
+  box-shadow: var(--shadow);
+}
 
-        .stTextInput input, .stTextArea textarea, .stSelectbox div, .stMultiSelect div, .stDateInput input, .stFileUploader{
-          background: var(--glass-bg) !important;
-          border: 1px solid var(--glass-border) !important;
-          border-radius: 14px !important;
-          backdrop-filter: blur(14px) saturate(170%) !important;
-          -webkit-backdrop-filter: blur(14px) saturate(170%) !important;
-          box-shadow: var(--shadow);
-        }
+[data-testid="stDataFrame"], [data-testid="stTable"]{
+  background: var(--glass-bg) !important;
+  border: 1px solid var(--glass-border) !important;
+  border-radius: 18px !important;
+  overflow: hidden !important;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px) saturate(170%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(170%) !important;
+}
 
-        [data-testid="stDataFrame"], [data-testid="stTable"]{
-          background: var(--glass-bg) !important;
-          border: 1px solid var(--glass-border) !important;
-          border-radius: 16px !important;
-          overflow: hidden !important;
-          box-shadow: var(--shadow);
-          backdrop-filter: blur(14px) saturate(170%) !important;
-          -webkit-backdrop-filter: blur(14px) saturate(170%) !important;
-        }
+.glass-card{
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  padding: 18px 18px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px) saturate(170%);
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
+}
 
-        .glass-card{
-          background: var(--glass-bg);
-          border: 1px solid var(--glass-border);
-          border-radius: 18px;
-          padding: 18px 18px;
-          box-shadow: var(--shadow);
-          backdrop-filter: blur(16px) saturate(170%);
-          -webkit-backdrop-filter: blur(16px) saturate(170%);
-        }
-
-        .divider{
-          height: 1px;
-          background: rgba(0,0,0,0.08);
-          margin: 14px 0 18px 0;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
-apply_liquid_glass_theme()
+.divider{
+  height: 1px;
+  background: rgba(0,0,0,0.08);
+  margin: 14px 0 18px 0;
+}
