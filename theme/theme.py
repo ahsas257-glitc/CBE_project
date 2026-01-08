@@ -7,6 +7,6 @@ def apply_theme():
     css = css_path.read_text(encoding="utf-8")
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
-def asset_path(filename: str) -> Path:
+def asset_path(filename: str) -> str:
     base_dir = Path(__file__).resolve().parents[1]
-    return base_dir / "theme" / "assets" / filename
+    return str(base_dir / "theme" / "assets" / filename)
