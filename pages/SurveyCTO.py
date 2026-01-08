@@ -2,14 +2,15 @@ import streamlit as st
 from PIL import Image
 import base64
 from io import BytesIO
+from pathlib import Path
 
 st.set_page_config(page_title="SurveyCTO Access", layout="wide")
 
-def load_image_from_secrets(key):
-    img_bytes = base64.b64decode(st.secrets[key])
-    return Image.open(BytesIO(img_bytes))
+BASE_DIR = Path(__file__).resolve().parents[1]
+header_path = BASE_DIR / "assets" / "surveycto_cover.jpg"
+cover_path = BASE_DIR / "assets" / "generic-post-image.jpg"
 
-header_img = load_image_from_secrets("surveycto_header")
+header_img = Image.open(header_path)
 st.image(header_img, use_container_width=True)
 
 st.markdown("<hr>", unsafe_allow_html=True)
@@ -31,7 +32,6 @@ tabs = {
 }
 
 cols = st.columns(len(tabs))
-
 for i, (name, url) in enumerate(tabs.items()):
     with cols[i]:
         st.markdown(
@@ -46,9 +46,7 @@ for i, (name, url) in enumerate(tabs.items()):
                     border-radius:8px;
                     cursor:pointer;
                     font-size:16px;
-                ">
-                    {name}
-                </button>
+                ">{name}</button>
             </a>
             """,
             unsafe_allow_html=True
@@ -56,7 +54,7 @@ for i, (name, url) in enumerate(tabs.items()):
 
 st.markdown("---")
 
-cover_img = load_image_from_secrets("surveycto_cover")
+cover_img = Image.open(cover_path)
 buffer = BytesIO()
 cover_img.save(buffer, format="JPEG")
 img_str = base64.b64encode(buffer.getvalue()).decode()
@@ -87,9 +85,7 @@ st.markdown(
             z-index: 1;
             text-align: center;
             font-size: 40px;
-        ">
-            SurveyCTO Data Management Portal
-        </h2>
+        ">SurveyCTO Data Management Portal</h2>
     </div>
     """,
     unsafe_allow_html=True
