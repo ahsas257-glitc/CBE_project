@@ -18,8 +18,8 @@ if base_dir is None:
     st.write("Current file:", str(THIS_FILE))
     st.stop()
 
-unicef_logo_path = base_dir / "theme" / "assets" / "unicef_logo.png"
-ppc_logo_path = base_dir / "theme" / "assets" / "ppc_logo.png"
+unicef_logo_path = base_dir / "theme"/"assets"/"logo"/"unicef.png"
+ppc_logo_path = base_dir / "theme"/"assets"/"logo"/"ppc.png"
 
 if not unicef_logo_path.exists():
     st.error(f"UNICEF logo not found: {unicef_logo_path}")
