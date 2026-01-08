@@ -3,6 +3,8 @@ import streamlit as st
 from io import BytesIO
 import gspread
 from google.oauth2.service_account import Credentials
+from theme.theme import apply_theme
+apply_theme()
 
 st.set_page_config(page_title="Tool 10 QC Issues", layout="wide")
 st.title("🛠 Tool 10 QC Issues")
