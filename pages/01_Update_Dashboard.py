@@ -4,6 +4,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from io import BytesIO
 import os
+from theme.theme import apply_theme, asset_path
 
 st.set_page_config(page_title="CBE Dashboard Updater", layout="wide")
 st.title("CBE Dashboard Updater")
