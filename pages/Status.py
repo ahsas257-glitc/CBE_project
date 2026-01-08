@@ -3,6 +3,8 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from io import BytesIO
+from theme.theme import apply_theme
+apply_theme()
 
 st.set_page_config(page_title="CBE Dashboard Updater", layout="wide")
 
