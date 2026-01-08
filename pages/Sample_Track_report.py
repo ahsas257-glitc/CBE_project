@@ -145,8 +145,41 @@ def load_sample_data():
     np.random.seed(42)
     
     regions = ["Central", "East", "West", "North", "South", "Northeast", "Southeast", "Central Highland"]
-    provinces = ["Kabul", "Herat", "Balkh", "Kandahar", "Nangarhar", "Kunduz", "Badakhshan", "Ghazni", 
-                 "Paktya", "Logar", "Parwan", "Kapisa", "Baghlan", "Faryab", "Jawzjan", "Samangan"]
+    provinces = [ 
+    "Badakhshan",
+    "Badghis",
+    "Baghlan",
+    "Balkh",
+    "Bamyan",
+    "Daykundi",
+    "Farah",
+    "Faryab",
+    "Ghazni",
+    "Ghor",
+    "Hilmand",
+    "Hirat",
+    "Jawzjan",
+    "Kabul",
+    "Kandahar",
+    "Kapisa",
+    "Khost",
+    "Kunar",
+    "Kunduz",
+    "Laghman",
+    "Logar",
+    "Maidan Wardak",
+    "Nangarhar",
+    "Nimroz",
+    "Nuristan",
+    "Paktika",
+    "Paktya",
+    "Panjsher",
+    "Parwan",
+    "Samangan",
+    "Sar-e-Pul",
+    "Takhar",
+    "Uruzgan",
+    "Zabul",]
     
     data = []
     for i in range(200):
