@@ -1,196 +1,271 @@
 import streamlit as st
 from PIL import Image
 from pathlib import Path
+import base64
 
+# اضافه کردن theme به path
+import sys
+sys.path.append(str(Path(__file__).parent))
+
+# اعمال تم
+from theme.theme import apply_theme
+apply_theme()
+
+# تنظیمات صفحه
+st.set_page_config(
+    page_title="Welcome | CBE Dashboard",
+    page_icon="🏫",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# پیدا کردن مسیر فایل‌ها
 THIS_FILE = Path(__file__).resolve()
-candidates = [THIS_FILE.parents[0], THIS_FILE.parents[1], THIS_FILE.parents[2], THIS_FILE.parents[3]]
+BASE_DIR = THIS_FILE.parent
 
-base_dir = None
-for p in candidates:
-    if (p / "theme" / "assets").exists():
-        base_dir = p
-        break
+# مسیر لوگوها
+LOGO_DIR = BASE_DIR / "theme" / "assets" / "logo"
+UNICEF_LOGO = LOGO_DIR / "unicef.png"
+PPC_LOGO = LOGO_DIR / "ppc.png"
 
-if base_dir is None:
-    st.error("theme/assets folder not found.")
-    st.stop()
+# تابع برای تبدیل عکس به base64
+def image_to_base64(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode()
 
-unicef_logo_path = base_dir / "theme" / "assets" / "logo" / "unicef.png"
-ppc_logo_path = base_dir / "theme" / "assets" / "logo" / "ppc.png"
+# تبدیل لوگوها
+unicef_base64 = image_to_base64(UNICEF_LOGO) if UNICEF_LOGO.exists() else ""
+ppc_base64 = image_to_base64(PPC_LOGO) if PPC_LOGO.exists() else ""
 
-if not unicef_logo_path.exists():
-    st.error(f"UNICEF logo not found: {unicef_logo_path}")
-    st.stop()
+# HTML برای صفحه اصلی
+main_html = f"""
+<div style="max-width: 1400px; margin: 0 auto; padding: 2rem;">
 
-if not ppc_logo_path.exists():
-    st.error(f"PPC logo not found: {ppc_logo_path}")
-    st.stop()
-
-# استایل‌های سفارشی
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-</style>
-""", unsafe_allow_html=True)
-
-# ساختار HTML اصلی
-st.markdown("""
-<div class="main-container">
     <!-- هدر لوگوها -->
-    <div class="logo-header">
-        <div class="logo-grid">
-            <div class="logo-item">
-                <div class="logo-badge">
-                    <img src="data:image/png;base64,{}" alt="UNICEF Logo" width="120">
-                </div>
+    <div style="
+        background: linear-gradient(135deg, #ffffff 0%, #f8faff 100%);
+        backdrop-filter: blur(20px);
+        border-radius: 24px;
+        padding: 2.5rem;
+        margin: 2rem auto 3rem;
+        box-shadow: 0 15px 40px rgba(0, 119, 182, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.8);
+        text-align: center;
+        position: relative;
+    ">
+        <div style="display: flex; justify-content: center; align-items: center; gap: 4rem; flex-wrap: wrap;">
+            <div style="text-align: center;">
+                <img src="data:image/png;base64,{unicef_base64}" 
+                     alt="UNICEF Logo" 
+                     style="width: 140px; height: auto; transition: transform 0.3s ease;">
             </div>
-            <div class="logo-item">
-                <div class="logo-badge">
-                    <img src="data:image/png;base64,{}" alt="PPC Logo" width="150">
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- عنوان اصلی -->
-    <div class="main-title">
-        <h1>Welcome to CBE Monitoring Dashboard</h1>
-        <p class="title-subtitle">
-            A collaborative platform for UNICEF's Community-Based Education program, 
-            powered by PPC as the Third Party Monitoring partner.
-        </p>
-    </div>
-    
-    <!-- بخش مقدمه -->
-    <div class="content-section">
-        <h2 class="section-title">Project Overview</h2>
-        <p style="font-size: 1.2rem; line-height: 1.8; color: #555;">
-            This advanced monitoring dashboard has been developed to support <strong>UNICEF's Community-Based Education (CBE)</strong> 
-            initiative across remote regions. <strong>PPC</strong>, serving as the <strong>Third Party Monitoring (TPM)</strong> 
-            partner, ensures rigorous data collection, validation, and comprehensive reporting from field operations.
-        </p>
-    </div>
-    
-    <!-- اهداف پروژه -->
-    <div class="content-section">
-        <h2 class="section-title">Project Objectives</h2>
-        <ul class="goals-list">
-            <li class="goal-item">
-                <div class="goal-icon">🎯</div>
-                <div class="goal-content">
-                    <h4>Enhanced Educational Access</h4>
-                    <p>Expand quality education reach to the most remote and underserved communities through sustainable CBE programs.</p>
-                </div>
-            </li>
-            <li class="goal-item">
-                <div class="goal-icon">🏫</div>
-                <div class="goal-content">
-                    <h4>Quality Learning Environment</h4>
-                    <p>Monitor and improve classroom conditions, teaching resources, and overall learning atmosphere for CBE students.</p>
-                </div>
-            </li>
-            <li class="goal-item">
-                <div class="goal-icon">📊</div>
-                <div class="goal-content">
-                    <h4>Performance Tracking</h4>
-                    <p>Systematically track teacher performance, student attendance, and learning outcomes across all CBE centers.</p>
-                </div>
-            </li>
-            <li class="goal-item">
-                <div class="goal-icon">🔍</div>
-                <div class="goal-content">
-                    <h4>Data-Driven Decision Making</h4>
-                    <p>Provide transparent, real-time data analytics to support evidence-based policy and program decisions.</p>
-                </div>
-            </li>
-        </ul>
-    </div>
-    
-    <!-- قابلیت‌های داشبورد -->
-    <div class="content-section">
-        <h2 class="section-title">Dashboard Capabilities</h2>
-        <div class="features-grid">
-            <div class="feature-card">
-                <div class="feature-icon">📤</div>
-                <h3>Smart Data Management</h3>
-                <p>Upload, validate, and process monitoring survey data with automated quality checks and validation rules.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">📈</div>
-                <h3>Real-Time Monitoring</h3>
-                <p>Track field monitoring results through QC_Log with interactive visualizations and performance indicators.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">📋</div>
-                <h3>Advanced Analytics</h3>
-                <p>Generate comprehensive reports, export data for in-depth analysis, and identify trends and patterns.</p>
+            <div style="text-align: center;">
+                <img src="data:image/png;base64,{ppc_base64}" 
+                     alt="PPC Logo" 
+                     style="width: 160px; height: auto; transition: transform 0.3s ease;">
             </div>
         </div>
     </div>
-    
-    <!-- دکمه اقدام -->
-    <div class="cta-section">
-        <h2 style="font-size: 2rem; margin-bottom: 2rem; color: var(--unicef-blue);">
-            Ready to Explore the Data?
-        </h2>
-        <p style="font-size: 1.2rem; margin-bottom: 2.5rem; color: #666;">
-            Start exploring monitoring insights, generating reports, and making data-driven decisions.
-        </p>
-        <button class="cta-button" onclick="location.href='/data_upload'">
-            <span>Get Started</span>
-            <span>→</span>
-        </button>
-    </div>
-    
-    <!-- فوتر -->
-    <div class="footer">
-        <div class="footer-logos">
-            <img src="data:image/png;base64,{}" alt="UNICEF" width="80">
-            <img src="data:image/png;base64,{}" alt="PPC" width="100">
-        </div>
-        <p>© 2024 UNICEF CBE Monitoring Dashboard | Powered by PPC - Third Party Monitoring Partner</p>
-        <p style="font-size: 0.8rem; opacity: 0.7; margin-top: 0.5rem;">
-            This platform is designed for monitoring and evaluation purposes only.
-        </p>
-    </div>
-</div>
-""".format(
-    # Base64 encoded logos (در عمل باید از فایل‌های واقعی استفاده شود)
-    "UNICEF_BASE64_PLACEHOLDER",
-    "PPC_BASE64_PLACEHOLDER",
-    "UNICEF_BASE64_PLACEHOLDER_SMALL",
-    "PPC_BASE64_PLACEHOLDER_SMALL"
-), unsafe_allow_html=True)
 
-# نمایش لوگوها در سایدبار کوچک
+    <!-- عنوان اصلی -->
+    <div style="text-align: center; margin: 3rem 0;">
+        <h1 class="main-title">Welcome to CBE Monitoring Dashboard</h1>
+        <p style="font-size: 1.4rem; color: #666; max-width: 800px; margin: 1rem auto; line-height: 1.6;">
+            This dashboard has been developed for <strong>UNICEF's Community-Based Education (CBE)</strong> project.  
+            <strong>PPC</strong>, as the <strong>Third Party Monitoring (TPM)</strong> partner, is responsible for 
+            collecting, validating, and reporting monitoring data from the field.
+        </p>
+    </div>
+
+    <!-- اهداف پروژه -->
+    <div class="custom-card">
+        <h2 style="color: var(--unicef-blue); margin-bottom: 2rem; font-size: 2rem;">
+            🎯 Project Objectives
+        </h2>
+        
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
+            <div style="
+                background: rgba(0, 119, 182, 0.05);
+                padding: 1.5rem;
+                border-radius: 16px;
+                border-left: 4px solid var(--unicef-blue);
+            ">
+                <h4 style="color: #333; margin-bottom: 0.5rem;">🏫 Improve Access to Education</h4>
+                <p style="color: #666; line-height: 1.6;">
+                    Expand quality education reach to remote and underserved communities through sustainable CBE programs.
+                </p>
+            </div>
+            
+            <div style="
+                background: rgba(0, 119, 182, 0.05);
+                padding: 1.5rem;
+                border-radius: 16px;
+                border-left: 4px solid var(--ppc-orange);
+            ">
+                <h4 style="color: #333; margin-bottom: 0.5rem;">📊 Quality Learning Environment</h4>
+                <p style="color: #666; line-height: 1.6;">
+                    Monitor and ensure optimal classroom conditions, teaching resources, and learning atmosphere.
+                </p>
+            </div>
+            
+            <div style="
+                background: rgba(0, 119, 182, 0.05);
+                padding: 1.5rem;
+                border-radius: 16px;
+                border-left: 4px solid var(--success);
+            ">
+                <h4 style="color: #333; margin-bottom: 0.5rem;">👨‍🏫 Performance Monitoring</h4>
+                <p style="color: #666; line-height: 1.6;">
+                    Track teacher performance and student attendance across all CBE centers systematically.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- قابلیت‌های داشبورد -->
+    <div class="custom-card">
+        <h2 style="color: var(--unicef-blue); margin-bottom: 2rem; font-size: 2rem;">
+            ✨ Dashboard Features
+        </h2>
+        
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem;">
+            <div style="
+                background: white;
+                padding: 2rem;
+                border-radius: 20px;
+                text-align: center;
+                box-shadow: 0 8px 25px rgba(0, 0, 0, 0.05);
+                border-top: 4px solid var(--info);
+                transition: all 0.3s ease;
+            ">
+                <div style="
+                    width: 70px;
+                    height: 70px;
+                    background: linear-gradient(135deg, var(--info), #2980b9);
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    margin: 0 auto 1.5rem;
+                    color: white;
+                    font-size: 1.8rem;
+                ">
+                    📤
+                </div>
+                <h3 style="color: #333; margin-bottom: 1rem;">Data Management</h3>
+                <p style="color: #666; line-height: 1.6;">
+                    Upload and validate survey data with automated quality checks.
+                </p>
+            </div>
+            
+            <div style="
+                background: white;
+                padding: 2rem;
+                border-radius: 20px;
+                text-align: center;
+                box-shadow: 0 8px 25px rgba(0, 0, 0, 0.05);
+                border-top: 4px solid var(--success);
+                transition: all 0.3s ease;
+            ">
+                <div style="
+                    width: 70px;
+                    height: 70px;
+                    background: linear-gradient(135deg, var(--success), #27ae60);
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    margin: 0 auto 1.5rem;
+                    color: white;
+                    font-size: 1.8rem;
+                ">
+                    📈
+                </div>
+                <h3 style="color: #333; margin-bottom: 1rem;">Real-time Monitoring</h3>
+                <p style="color: #666; line-height: 1.6;">
+                    Track monitoring results through QC_Log with interactive visualizations.
+                </p>
+            </div>
+            
+            <div style="
+                background: white;
+                padding: 2rem;
+                border-radius: 20px;
+                text-align: center;
+                box-shadow: 0 8px 25px rgba(0, 0, 0, 0.05);
+                border-top: 4px solid var(--warning);
+                transition: all 0.3s ease;
+            ">
+                <div style="
+                    width: 70px;
+                    height: 70px;
+                    background: linear-gradient(135deg, var(--warning), #e67e22);
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    margin: 0 auto 1.5rem;
+                    color: white;
+                    font-size: 1.8rem;
+                ">
+                    📋
+                </div>
+                <h3 style="color: #333; margin-bottom: 1rem;">Advanced Analytics</h3>
+                <p style="color: #666; line-height: 1.6;">
+                    Generate comprehensive reports and export data for in-depth analysis.
+                </p>
+            </div>
+        </div>
+    </div>
+
+</div>
+"""
+
+# نمایش HTML
+st.markdown(main_html, unsafe_allow_html=True)
+
+# سایدبار
 with st.sidebar:
-    st.markdown("### Partners")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.image(Image.open(unicef_logo_path), width=80)
-    with col2:
-        st.image(Image.open(ppc_logo_path), width=100)
+    st.markdown("### 🎨 Theme Settings")
+    theme = st.selectbox(
+        "Select Theme",
+        ["Light", "Dark"],
+        index=0
+    )
     
     st.markdown("---")
-    st.markdown("### Quick Access")
-    if st.button("📊 View Dashboard"):
-        st.switch_page("pages/dashboard.py")
-    if st.button("📤 Upload Data"):
-        st.switch_page("pages/upload.py")
-    if st.button("📋 Generate Report"):
+    
+    st.markdown("### 🔗 Quick Links")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📊 Dashboard", use_container_width=True):
+            st.switch_page("pages/dashboard.py")
+    
+    with col2:
+        if st.button("📤 Upload", use_container_width=True):
+            st.switch_page("pages/upload.py")
+    
+    if st.button("📋 Generate Report", use_container_width=True):
         st.switch_page("pages/reports.py")
+    
+    st.markdown("---")
+    
+    st.markdown("### 🏛️ Partners")
+    col_logo1, col_logo2 = st.columns(2)
+    with col_logo1:
+        st.image(Image.open(UNICEF_LOGO), width=80)
+    with col_logo2:
+        st.image(Image.open(PPC_LOGO), width=100)
 
-# لود کردن CSS
-def load_css():
-    css_path = base_dir / "theme" / "theme.css"
-    if css_path.exists():
-        with open(css_path) as f:
-            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
-    else:
-        st.markdown('<style>' + '''
-        /* استایل‌های پیش‌فرض در صورت عدم وجود فایل CSS */
-        body { font-family: 'Inter', sans-serif; }
-        .stApp { background: linear-gradient(135deg, #f5f7fa 0%, #e3e9ff 100%); }
-        ''' + '</style>', unsafe_allow_html=True)
-
-load_css()
+# فوت‌نوت
+st.markdown("---")
+st.markdown(
+    """
+    <div style="text-align: center; color: #666; padding: 2rem 0; font-size: 0.9rem;">
+        © 2024 UNICEF CBE Monitoring Dashboard | Powered by PPC - Third Party Monitoring Partner<br>
+        <small>This platform is designed for monitoring and evaluation purposes only.</small>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
