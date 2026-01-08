@@ -17,12 +17,26 @@ WORKSHEET_NAME = "Sample_Track"
 @st.cache_data(ttl=300)
 def load_sample_track() -> pd.DataFrame:
     scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=scopes
+    )
     client = gspread.authorize(creds)
     ws = client.open_by_key(SPREADSHEET_KEY).worksheet(WORKSHEET_NAME)
-    df = pd.DataFrame(ws.get_all_records())
+
+    values = ws.get_all_values()
+    if not values or len(values) < 2:
+        return pd.DataFrame()
+
+    header = values[0]
+    data = values[1:]
+
+    header = [h.strip() if h else f"col_{i}" for i, h in enumerate(header)]
+    df = pd.DataFrame(data, columns=header)
+
     df.columns = [c.strip() for c in df.columns]
     return df
+
 
 def to_number(series: pd.Series) -> pd.Series:
     s = series.astype(str).str.replace(",", "", regex=False)
