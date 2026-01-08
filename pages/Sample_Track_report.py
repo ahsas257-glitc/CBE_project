@@ -2,234 +2,249 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
+import gspread
+from google.oauth2.service_account import Credentials
 from theme.theme import apply_theme
+
+st.set_page_config(page_title="Sample Track Report", layout="wide")
 apply_theme()
 
-st.set_page_config(page_title="Auto Report Dashboard", layout="wide")
+st.title("Sample Track Report")
 
-st.title("📊 Automated Regional Report (Google Sheet → Streamlit)")
-
-# 1) Put your published CSV link here (Publish to web -> CSV)
-SHEET_CSV_URL = st.secrets.get("SHEET_CSV_URL", "")
-
-st.sidebar.header("Data Source")
-
-use_manual_url = st.sidebar.checkbox("Use manual CSV URL", value=(SHEET_CSV_URL == ""))
-if use_manual_url:
-    SHEET_CSV_URL = st.sidebar.text_input("Paste Published CSV URL", value=SHEET_CSV_URL)
+SPREADSHEET_KEY = "1lkztBZ4eG1BQx-52XgnA6w8YIiw-Sm85pTlQQziurfw"
+WORKSHEET_NAME = "Sample_Track"
 
 @st.cache_data(ttl=300)
-def load_data(url: str) -> pd.DataFrame:
-    if not url:
-        return pd.DataFrame()
-    df = pd.read_csv(url)
-    # Standardize columns (trim spaces)
+def load_sample_track() -> pd.DataFrame:
+    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+    client = gspread.authorize(creds)
+    ws = client.open_by_key(SPREADSHEET_KEY).worksheet(WORKSHEET_NAME)
+    df = pd.DataFrame(ws.get_all_records())
     df.columns = [c.strip() for c in df.columns]
     return df
 
-df = load_data(SHEET_CSV_URL)
+def to_number(series: pd.Series) -> pd.Series:
+    s = series.astype(str).str.replace(",", "", regex=False)
+    s = s.str.replace(r"[^0-9\.\-]", "", regex=True)
+    return pd.to_numeric(s, errors="coerce")
+
+def extract_percent(series: pd.Series) -> pd.Series:
+    s = series.astype(str).str.extract(r"(\d+(?:\.\d+)?)\s*%")[0]
+    return pd.to_numeric(s, errors="coerce")
+
+df = load_sample_track()
 
 if df.empty:
-    st.warning("CSV URL را وارد کن یا در Streamlit secrets مقدار SHEET_CSV_URL را بگذار.")
+    st.error("No data found in Sample_Track.")
     st.stop()
 
-st.success(f"Loaded rows: {len(df):,} | columns: {len(df.columns)}")
+expected_cols = [
+    "Region", "Province", "Disrtict",
+    "CBE-Sample Size", "PBs_sample size",
+    "CBE_Data Received", "PBs_Data Received",
+    "Total checked", "Approved", "Pending", "Rejected", "Not checked",
+    "Unable to visit-CBE", "Unable to visit-PBs",
+    "Remainig", "Progress", "# of Enumerators", "Comments"
+]
 
-# ---- Configure your key columns here ----
-# Change these names to match your sheet columns exactly
-REGION_COL   = "Region"
-PROVINCE_COL = "Province"
-DISTRICT_COL = "District"
+for c in expected_cols:
+    if c not in df.columns:
+        df[c] = ""
 
-# Numeric / metric columns (auto-detect numeric)
-numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-date_cols = [c for c in df.columns if "date" in c.lower()]
+df["Region"] = df["Region"].astype(str).str.strip()
+df["Province"] = df["Province"].astype(str).str.strip()
+df["District"] = df["Disrtict"].astype(str).str.strip()
 
-# Basic checks
-missing = [c for c in [REGION_COL, PROVINCE_COL, DISTRICT_COL] if c not in df.columns]
-if missing:
-    st.error(
-        "این ستون‌ها در شیت پیدا نشد: "
-        + ", ".join(missing)
-        + "\n\nلطفاً نام دقیق ستون‌ها را در کد (REGION_COL/PROVINCE_COL/DISTRICT_COL) برابر با شیت تنظیم کن."
-    )
-    st.stop()
+df["CBE_Sample"] = to_number(df["CBE-Sample Size"])
+df["PB_Sample"] = to_number(df["PBs_sample size"])
+df["CBE_Received"] = to_number(df["CBE_Data Received"])
+df["PB_Received"] = to_number(df["PBs_Data Received"])
+df["Total_Checked"] = to_number(df["Total checked"])
+df["Approved"] = to_number(df["Approved"])
+df["Pending"] = to_number(df["Pending"])
+df["Rejected"] = to_number(df["Rejected"])
+df["Not_Checked"] = to_number(df["Not checked"])
+df["Unable_CBE"] = to_number(df["Unable to visit-CBE"])
+df["Unable_PB"] = to_number(df["Unable to visit-PBs"])
+df["Remaining"] = to_number(df["Remainig"])
+df["Progress_Pct"] = extract_percent(df["Progress"])
+df["Enumerators"] = to_number(df["# of Enumerators"])
 
-# --- Sidebar Filters ---
-st.sidebar.header("Filters")
-
-regions = ["All"] + sorted(df[REGION_COL].dropna().astype(str).unique().tolist())
-sel_region = st.sidebar.selectbox("Region", regions)
-
-fdf = df.copy()
-if sel_region != "All":
-    fdf = fdf[fdf[REGION_COL].astype(str) == sel_region]
-
-provinces = ["All"] + sorted(fdf[PROVINCE_COL].dropna().astype(str).unique().tolist())
-sel_province = st.sidebar.selectbox("Province (ولایت)", provinces)
-
-if sel_province != "All":
-    fdf = fdf[fdf[PROVINCE_COL].astype(str) == sel_province]
-
-districts = ["All"] + sorted(fdf[DISTRICT_COL].dropna().astype(str).unique().tolist())
-sel_district = st.sidebar.selectbox("District (ولسوالی)", districts)
-
-if sel_district != "All":
-    fdf = fdf[fdf[DISTRICT_COL].astype(str) == sel_district]
-
-st.sidebar.header("Charts")
-metric = st.sidebar.selectbox(
-    "Metric (عدد/شاخص) برای چارت",
-    options=(numeric_cols if numeric_cols else df.columns),
+df["Is_Total_Row"] = (
+    df["Province"].str.lower().eq("total")
+    | df["District"].str.lower().eq("total")
+    | df["Region"].str.lower().eq("total")
 )
 
-# If metric is not numeric, try to make a count chart instead
-is_metric_numeric = metric in numeric_cols
+base = df[~df["Is_Total_Row"]].copy()
 
-# --- KPIs ---
-c1, c2, c3, c4 = st.columns(4)
+st.sidebar.header("Filters")
+regions = ["All"] + sorted([r for r in base["Region"].dropna().unique().tolist() if r and r.lower() != "nan"])
+sel_region = st.sidebar.selectbox("Region", regions)
 
-c1.metric("Rows (Filtered)", f"{len(fdf):,}")
-c2.metric("Regions", f"{fdf[REGION_COL].nunique():,}")
-c3.metric("Provinces", f"{fdf[PROVINCE_COL].nunique():,}")
-c4.metric("Districts", f"{fdf[DISTRICT_COL].nunique():,}")
+fdf = base.copy()
+if sel_region != "All":
+    fdf = fdf[fdf["Region"].astype(str) == sel_region]
 
-st.divider()
+provinces = ["All"] + sorted([p for p in fdf["Province"].dropna().unique().tolist() if p and p.lower() != "nan"])
+sel_province = st.sidebar.selectbox("Province", provinces)
 
-# --- Aggregations ---
-# Province summary
-if is_metric_numeric:
-    prov_summary = (
-        fdf.groupby(PROVINCE_COL, dropna=False)[metric]
-        .agg(["count", "sum", "mean"])
-        .reset_index()
-        .sort_values("sum", ascending=False)
-    )
-else:
-    prov_summary = (
-        fdf.groupby(PROVINCE_COL, dropna=False)
-        .size()
-        .reset_index(name="count")
-        .sort_values("count", ascending=False)
-    )
+if sel_province != "All":
+    fdf = fdf[fdf["Province"].astype(str) == sel_province]
 
-# District summary
-if is_metric_numeric:
-    dist_summary = (
-        fdf.groupby([PROVINCE_COL, DISTRICT_COL], dropna=False)[metric]
-        .agg(["count", "sum", "mean"])
-        .reset_index()
-        .sort_values("sum", ascending=False)
-    )
-else:
-    dist_summary = (
-        fdf.groupby([PROVINCE_COL, DISTRICT_COL], dropna=False)
-        .size()
-        .reset_index(name="count")
-        .sort_values("count", ascending=False)
-    )
+districts = ["All"] + sorted([d for d in fdf["District"].dropna().unique().tolist() if d and d.lower() != "nan"])
+sel_district = st.sidebar.selectbox("District", districts)
 
-# --- Charts (Altair) ---
-st.subheader("📌 Province-level Chart")
+if sel_district != "All":
+    fdf = fdf[fdf["District"].astype(str) == sel_district]
 
-if is_metric_numeric:
-    chart_df = prov_summary.rename(columns={"sum": "Total", "mean": "Average", "count": "Count"})
-    bar = (
-        alt.Chart(chart_df)
-        .mark_bar()
-        .encode(
-            x=alt.X(f"{PROVINCE_COL}:N", sort="-y", title="Province"),
-            y=alt.Y("Total:Q", title=f"Total {metric}"),
-            tooltip=[PROVINCE_COL, "Count", "Total", "Average"],
-        )
-        .interactive()
-    )
-else:
-    chart_df = prov_summary
-    bar = (
-        alt.Chart(chart_df)
-        .mark_bar()
-        .encode(
-            x=alt.X(f"{PROVINCE_COL}:N", sort="-y", title="Province"),
-            y=alt.Y("count:Q", title="Count"),
-            tooltip=[PROVINCE_COL, "count"],
-        )
-        .interactive()
-    )
+def safe_sum(s: pd.Series) -> float:
+    return float(np.nan_to_num(s, nan=0.0).sum())
 
-st.altair_chart(bar, use_container_width=True)
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Rows", f"{len(fdf):,}")
+k2.metric("Provinces", f"{fdf['Province'].nunique():,}")
+k3.metric("Districts", f"{fdf['District'].nunique():,}")
+k4.metric("Avg Progress (%)", f"{np.nanmean(fdf['Progress_Pct']):.1f}" if fdf["Progress_Pct"].notna().any() else "N/A")
 
-st.subheader("📌 District-level Chart")
-
-if is_metric_numeric:
-    dchart_df = dist_summary.rename(columns={"sum": "Total", "mean": "Average", "count": "Count"})
-    dbar = (
-        alt.Chart(dchart_df.head(30))
-        .mark_bar()
-        .encode(
-            x=alt.X(f"{DISTRICT_COL}:N", sort="-y", title="District"),
-            y=alt.Y("Total:Q", title=f"Top 30 Districts by Total {metric}"),
-            tooltip=[PROVINCE_COL, DISTRICT_COL, "Count", "Total", "Average"],
-        )
-        .interactive()
-    )
-else:
-    dchart_df = dist_summary
-    dbar = (
-        alt.Chart(dchart_df.head(30))
-        .mark_bar()
-        .encode(
-            x=alt.X(f"{DISTRICT_COL}:N", sort="-y", title="District"),
-            y=alt.Y("count:Q", title="Top 30 Districts by Count"),
-            tooltip=[PROVINCE_COL, DISTRICT_COL, "count"],
-        )
-        .interactive()
-    )
-
-st.altair_chart(dbar, use_container_width=True)
+k5, k6, k7, k8 = st.columns(4)
+k5.metric("CBE Sample", f"{safe_sum(fdf['CBE_Sample']):,.0f}")
+k6.metric("PB Sample", f"{safe_sum(fdf['PB_Sample']):,.0f}")
+k7.metric("Approved", f"{safe_sum(fdf['Approved']):,.0f}")
+k8.metric("Remaining", f"{safe_sum(fdf['Remaining']):,.0f}")
 
 st.divider()
 
-# --- Tables ---
-colA, colB = st.columns(2)
+st.subheader("Province Overview")
 
-with colA:
-    st.subheader("📄 Province Summary Table")
-    st.dataframe(prov_summary, use_container_width=True, height=420)
+prov = (
+    fdf.groupby(["Region", "Province"], dropna=False)
+    .agg(
+        Districts=("District", "nunique"),
+        CBE_Sample=("CBE_Sample", "sum"),
+        PB_Sample=("PB_Sample", "sum"),
+        CBE_Received=("CBE_Received", "sum"),
+        PB_Received=("PB_Received", "sum"),
+        Total_Checked=("Total_Checked", "sum"),
+        Approved=("Approved", "sum"),
+        Pending=("Pending", "sum"),
+        Rejected=("Rejected", "sum"),
+        Not_Checked=("Not_Checked", "sum"),
+        Unable_CBE=("Unable_CBE", "sum"),
+        Unable_PB=("Unable_PB", "sum"),
+        Remaining=("Remaining", "sum"),
+        Avg_Progress=("Progress_Pct", "mean"),
+        Enumerators=("Enumerators", "max"),
+    )
+    .reset_index()
+)
 
-with colB:
-    st.subheader("📄 District Summary Table")
-    st.dataframe(dist_summary, use_container_width=True, height=420)
+prov["Avg_Progress"] = prov["Avg_Progress"].round(1)
+
+metric_options = [
+    "Approved", "Remaining", "Pending", "Rejected", "Total_Checked",
+    "CBE_Received", "PB_Received", "CBE_Sample", "PB_Sample", "Avg_Progress"
+]
+metric = st.sidebar.selectbox("Chart Metric", metric_options, index=0)
+
+if metric == "Avg_Progress":
+    yfield = "Avg_Progress:Q"
+    ytitle = "Average Progress (%)"
+else:
+    yfield = f"{metric}:Q"
+    ytitle = metric.replace("_", " ")
+
+chart = (
+    alt.Chart(prov)
+    .mark_bar()
+    .encode(
+        x=alt.X("Province:N", sort="-y", title="Province"),
+        y=alt.Y(yfield, title=ytitle),
+        tooltip=[
+            "Region", "Province",
+            "Districts",
+            "CBE_Sample", "PB_Sample",
+            "CBE_Received", "PB_Received",
+            "Approved", "Pending", "Rejected", "Not_Checked",
+            "Unable_CBE", "Unable_PB",
+            "Remaining", "Avg_Progress",
+            "Enumerators",
+        ],
+    )
+    .interactive()
+)
+
+st.altair_chart(chart, use_container_width=True)
+
+st.subheader("Top Districts")
+
+dist = (
+    fdf.groupby(["Region", "Province", "District"], dropna=False)
+    .agg(
+        CBE_Sample=("CBE_Sample", "sum"),
+        PB_Sample=("PB_Sample", "sum"),
+        CBE_Received=("CBE_Received", "sum"),
+        PB_Received=("PB_Received", "sum"),
+        Total_Checked=("Total_Checked", "sum"),
+        Approved=("Approved", "sum"),
+        Pending=("Pending", "sum"),
+        Rejected=("Rejected", "sum"),
+        Not_Checked=("Not_Checked", "sum"),
+        Unable_CBE=("Unable_CBE", "sum"),
+        Unable_PB=("Unable_PB", "sum"),
+        Remaining=("Remaining", "sum"),
+        Progress=("Progress_Pct", "mean"),
+    )
+    .reset_index()
+)
+
+dist["Progress"] = dist["Progress"].round(1)
+
+top_metric = st.sidebar.selectbox("Top Districts By", ["Approved", "Remaining", "Pending", "Rejected", "Total_Checked", "Progress"], index=0)
+
+if top_metric == "Progress":
+    dist_sorted = dist.sort_values("Progress", ascending=False).head(30)
+    dy = alt.Y("Progress:Q", title="Average Progress (%)")
+else:
+    dist_sorted = dist.sort_values(top_metric, ascending=False).head(30)
+    dy = alt.Y(f"{top_metric}:Q", title=top_metric)
+
+dchart = (
+    alt.Chart(dist_sorted)
+    .mark_bar()
+    .encode(
+        x=alt.X("District:N", sort="-y", title="District"),
+        y=dy,
+        tooltip=["Region", "Province", "District", "Approved", "Remaining", "Pending", "Rejected", "Total_Checked", "Progress"],
+    )
+    .interactive()
+)
+
+st.altair_chart(dchart, use_container_width=True)
 
 st.divider()
 
-# --- Download filtered data & summaries ---
-st.subheader("⬇️ Downloads")
+t1, t2 = st.columns(2)
+with t1:
+    st.subheader("Province Summary Table")
+    st.dataframe(prov.sort_values(metric if metric != "Avg_Progress" else "Avg_Progress", ascending=False), use_container_width=True, height=420)
+
+with t2:
+    st.subheader("District Summary Table")
+    st.dataframe(dist.sort_values(top_metric if top_metric != "Progress" else "Progress", ascending=False), use_container_width=True, height=420)
+
+st.divider()
+
+st.subheader("Downloads")
 
 def to_csv_bytes(d: pd.DataFrame) -> bytes:
     return d.to_csv(index=False).encode("utf-8-sig")
 
-d1, d2, d3 = st.columns(3)
-with d1:
-    st.download_button(
-        "Download Filtered Data (CSV)",
-        data=to_csv_bytes(fdf),
-        file_name="filtered_data.csv",
-        mime="text/csv",
-    )
-with d2:
-    st.download_button(
-        "Download Province Summary (CSV)",
-        data=to_csv_bytes(prov_summary),
-        file_name="province_summary.csv",
-        mime="text/csv",
-    )
-with d3:
-    st.download_button(
-        "Download District Summary (CSV)",
-        data=to_csv_bytes(dist_summary),
-        file_name="district_summary.csv",
-        mime="text/csv",
-    )
-
-st.caption("اگر نام ستون‌ها در شیت شما فرق دارد، فقط REGION_COL / PROVINCE_COL / DISTRICT_COL را مطابق شیت تنظیم کنید.")
+b1, b2, b3 = st.columns(3)
+with b1:
+    st.download_button("Download Filtered Data (CSV)", data=to_csv_bytes(fdf), file_name="sample_track_filtered.csv", mime="text/csv")
+with b2:
+    st.download_button("Download Province Summary (CSV)", data=to_csv_bytes(prov), file_name="sample_track_province_summary.csv", mime="text/csv")
+with b3:
+    st.download_button("Download District Summary (CSV)", data=to_csv_bytes(dist), file_name="sample_track_district_summary.csv", mime="text/csv")
