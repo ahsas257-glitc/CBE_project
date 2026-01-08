@@ -3,6 +3,8 @@ from PIL import Image
 import base64
 from io import BytesIO
 from pathlib import Path
+from theme.theme import apply_theme
+apply_theme()
 
 st.set_page_config(page_title="SurveyCTO Access", layout="wide")
 
