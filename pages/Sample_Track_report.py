@@ -113,19 +113,90 @@ PROVINCE_DISTRICTS = {
 
 @st.cache_data(ttl=300)
 def load_sample_track() -> pd.DataFrame:
+    from googleapiclient.discovery import build
+
     scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-    client = gspread.authorize(creds)
-    ws = client.open_by_key(SPREADSHEET_KEY).worksheet(WORKSHEET_NAME)
-    values = ws.get_all_values()
-    if not values or len(values) < 2:
+
+    service = build("sheets", "v4", credentials=creds, cache_discovery=False)
+
+    resp = service.spreadsheets().get(
+        spreadsheetId=SPREADSHEET_KEY,
+        ranges=[WORKSHEET_NAME],
+        includeGridData=True,
+        fields="sheets(data(rowData(values(effectiveValue,userEnteredValue,userEnteredFormat(backgroundColor)))))"
+    ).execute()
+
+    sheets = resp.get("sheets", [])
+    if not sheets:
         return pd.DataFrame()
-    header = values[0]
-    data = values[1:]
-    header = [h.strip() if h else f"col_{i}" for i, h in enumerate(header)]
-    df = pd.DataFrame(data, columns=header)
+
+    data_blocks = sheets[0].get("data", [])
+    if not data_blocks:
+        return pd.DataFrame()
+
+    row_data = data_blocks[0].get("rowData", [])
+    if len(row_data) < 2:
+        return pd.DataFrame()
+
+    def cell_text(v):
+        if not v:
+            return ""
+        ev = v.get("effectiveValue") or {}
+        if "stringValue" in ev:
+            return str(ev["stringValue"])
+        if "numberValue" in ev:
+            n = ev["numberValue"]
+            if isinstance(n, float) and n.is_integer():
+                return str(int(n))
+            return str(n)
+        if "boolValue" in ev:
+            return "TRUE" if ev["boolValue"] else "FALSE"
+        if "formulaValue" in ev:
+            return str(ev["formulaValue"])
+        uev = v.get("userEnteredValue") or {}
+        if "stringValue" in uev:
+            return str(uev["stringValue"])
+        if "numberValue" in uev:
+            return str(uev["numberValue"])
+        return ""
+
+    def is_target_bg(v, tol=0.02):
+        fmt = (v or {}).get("userEnteredFormat") or {}
+        bg = fmt.get("backgroundColor")
+        if not bg:
+            return False
+        r = float(bg.get("red", 1.0))
+        g = float(bg.get("green", 1.0))
+        b = float(bg.get("blue", 1.0))
+
+        tr, tg, tb = (201/255.0, 233/255.0, 231/255.0)
+        return (abs(r - tr) <= tol) and (abs(g - tg) <= tol) and (abs(b - tb) <= tol)
+
+    header_vals = row_data[0].get("values", [])
+    header = []
+    for i, v in enumerate(header_vals):
+        h = cell_text(v).strip()
+        header.append(h if h else f"col_{i}")
+
+    rows = []
+    for r in row_data[1:]:
+        vals = r.get("values", [])
+
+        if any(is_target_bg(v) for v in vals):
+            continue
+
+        row = [cell_text(vals[i]) if i < len(vals) else "" for i in range(len(header))]
+
+        if all(str(x).strip() == "" for x in row):
+            continue
+
+        rows.append(row)
+
+    df = pd.DataFrame(rows, columns=[c.strip() for c in header])
     df.columns = [c.strip() for c in df.columns]
     return df
+
 
 
 def to_number(series: pd.Series) -> pd.Series:
