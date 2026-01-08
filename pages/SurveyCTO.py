@@ -29,8 +29,8 @@ if base_dir is None:
         st.write("Exists:", (p / "theme" / "assets").exists())
     st.stop()
 
-header_path = base_dir / "theme" / "assets" / "surveycto_cover.jpg"
-cover_path = base_dir / "theme" / "assets" / "generic-post-image.jpg"
+header_path = base_dir /"theme"/"assets"/"logo"/"surveycto_cover.jpg"
+cover_path = base_dir /"theme"/"assets"/"logo"/"generic-post-image.jpg"
 
 if not header_path.exists():
     st.error(f"Header image not found: {header_path}")
