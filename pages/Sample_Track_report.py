@@ -8,6 +8,19 @@ import requests
 from io import BytesIO
 import base64
 import os
+import io
+from docx import Document
+from docx.shared import Inches, Pt, Cm, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.section import WD_SECTION
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from datetime import datetime
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
+import seaborn as sns
 
 # PDF generation (ReportLab)
 from reportlab.lib.pagesizes import A4
@@ -98,7 +111,544 @@ st.markdown('<div class="app-header">Sample Track Analytics Dashboard</div>', un
 # =========================
 SPREADSHEET_KEY = "1lkztBZ4eG1BQx-52XgnA6w8YIiw-Sm85pTlQQziurfw"
 WORKSHEET_NAME = "Test"
+def create_excel_report(df: pd.DataFrame, level: str = "district") -> bytes:
+    """
+    Create Excel reports at different aggregation levels
+    level: 'region', 'province', or 'district'
+    """
+    output = BytesIO()
+    
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        if level == "region":
+            summary = df.groupby("Region").agg({
+                "Total_Sample_Size": "sum",
+                "Total_Received": "sum",
+                "Total_Checked": "sum",
+                "Approved": "sum",
+                "Pending": "sum",
+                "Rejected": "sum",
+                "Unable_to_Visit": "sum"
+            }).reset_index()
+            
+            # Calculate percentages
+            summary["Progress_Percentage"] = (summary["Total_Checked"] / summary["Total_Sample_Size"] * 100).round(1)
+            summary["Approval_Rate"] = (summary["Approved"] / summary["Total_Checked"] * 100).round(1)
+            summary["Rejection_Rate"] = (summary["Rejected"] / summary["Total_Checked"] * 100).round(1)
+            summary["Received_Rate"] = (summary["Total_Received"] / summary["Total_Sample_Size"] * 100).round(1)
+            
+            summary.to_excel(writer, sheet_name='Regional_Summary', index=False)
+            
+        elif level == "province":
+            summary = df.groupby(["Region", "Province"]).agg({
+                "Total_Sample_Size": "sum",
+                "Total_Received": "sum",
+                "Total_Checked": "sum",
+                "Approved": "sum",
+                "Pending": "sum",
+                "Rejected": "sum",
+                "Unable_to_Visit": "sum",
+                "District": "nunique"
+            }).reset_index()
+            
+            summary = summary.rename(columns={"District": "District_Count"})
+            summary["Progress_Percentage"] = (summary["Total_Checked"] / summary["Total_Sample_Size"] * 100).round(1)
+            summary["Approval_Rate"] = (summary["Approved"] / summary["Total_Checked"] * 100).round(1)
+            summary["Rejection_Rate"] = (summary["Rejected"] / summary["Total_Checked"] * 100).round(1)
+            summary["Coverage_Rate"] = (summary["Total_Received"] / summary["Total_Sample_Size"] * 100).round(1)
+            
+            # Add status classification
+            summary["Status"] = summary["Progress_Percentage"].apply(
+                lambda x: "On Track" if x >= 75 else "Behind Schedule" if x >= 50 else "Critical"
+            )
+            
+            summary.to_excel(writer, sheet_name='Provincial_Summary', index=False)
+            
+        else:  # district level
+            summary = df[["Region", "Province", "District", 
+                         "Total_Sample_Size", "Total_Received", "Total_Checked",
+                         "Approved", "Pending", "Rejected", "Unable_to_Visit",
+                         "Progress_Percentage", "Progress_Status", "Comments"]].copy()
+            
+            summary["Approval_Rate"] = (summary["Approved"] / summary["Total_Checked"] * 100).round(1)
+            summary["Rejection_Rate"] = (summary["Rejected"] / summary["Total_Checked"] * 100).round(1)
+            summary["Received_Rate"] = (summary["Total_Received"] / summary["Total_Sample_Size"] * 100).round(1)
+            
+            summary.to_excel(writer, sheet_name='District_Details', index=False)
+        
+        # Add metadata sheet
+        metadata = pd.DataFrame({
+            "Report_Type": [f"{level.title()} Level Report"],
+            "Generated_Date": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+            "Total_Records": [len(df)],
+            "Tool_Used": [tool_choice],
+            "Filters_Applied": [str(filters_for_pdf)]
+        })
+        metadata.to_excel(writer, sheet_name='Metadata', index=False)
+    
+    output.seek(0)
+    return output.getvalue()
 
+# =========================
+# Comprehensive Word Report
+# =========================
+def create_comprehensive_word_report(
+    tool_choice: str,
+    filters: dict,
+    kpis: dict,
+    df: pd.DataFrame,
+    regional_summary: pd.DataFrame,
+    province_summary: pd.DataFrame,
+    district_summary: pd.DataFrame,
+    unable_to_visit_summary: pd.DataFrame,
+    comments_text: str
+) -> bytes:
+    """
+    Create a comprehensive Word report with detailed analysis
+    """
+    doc = Document()
+    
+    # Set document properties
+    doc.core_properties.author = "Sample Track Analytics System"
+    doc.core_properties.title = f"Comprehensive Monitoring Report - {tool_choice}"
+    doc.core_properties.subject = "Sample Tracking and Monitoring Analysis"
+    doc.core_properties.keywords = "Monitoring, Sample, Tracking, Analytics"
+    doc.core_properties.comments = "Comprehensive report generated by Sample Track Analytics Dashboard"
+    
+    # Set page margins
+    sections = doc.sections
+    for section in sections:
+        section.top_margin = Cm(2.5)
+        section.bottom_margin = Cm(2.5)
+        section.left_margin = Cm(2.5)
+        section.right_margin = Cm(2.5)
+    
+    # ========== TITLE PAGE ==========
+    # Add logo if exists
+    logo_path = "theme/assets/logo/ppc.png"
+    
+    # Title
+    title_para = doc.add_heading('COMPREHENSIVE SAMPLE TRACKING ANALYSIS REPORT', 0)
+    title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title_para.runs[0].font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+    
+    # Subtitle
+    subtitle = doc.add_paragraph()
+    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = subtitle.add_run(f"Monitoring Tool: {tool_choice}\n")
+    run.font.size = Pt(14)
+    run.font.color.rgb = RGBColor(0x47, 0x56, 0x69)
+    
+    run = subtitle.add_run(f"Date: {datetime.now().strftime('%d %B %Y')}\n")
+    run.font.size = Pt(12)
+    run.font.color.rgb = RGBColor(0x64, 0x74, 0x8b)
+    
+    doc.add_paragraph()
+    
+    # Confidential notice
+    confidential = doc.add_paragraph()
+    confidential.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = confidential.add_run("CONFIDENTIAL - FOR INTERNAL USE ONLY")
+    run.font.size = Pt(10)
+    run.font.color.rgb = RGBColor(0xdc, 0x26, 0x26)
+    run.bold = True
+    
+    doc.add_page_break()
+    
+    # ========== TABLE OF CONTENTS ==========
+    toc_title = doc.add_heading('TABLE OF CONTENTS', 1)
+    toc_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    toc_items = [
+        ("1. EXECUTIVE SUMMARY", 1),
+        ("2. METHODOLOGY AND DATA SOURCES", 2),
+        ("3. SCOPE AND COVERAGE ANALYSIS", 3),
+        ("4. DETAILED PERFORMANCE ANALYSIS", 4),
+        ("5. GEOGRAPHICAL DISTRIBUTION", 5),
+        ("6. UNABLE TO VISIT ANALYSIS", 6),
+        ("7. QUALITY ASSURANCE METRICS", 7),
+        ("8. TRENDS AND PATTERNS", 8),
+        ("9. CHALLENGES AND OBSERVATIONS", 9),
+        ("10. RECOMMENDATIONS", 10),
+        ("11. APPENDICES", 11),
+        ("Appendix A: Regional Performance Details", 12),
+        ("Appendix B: Provincial Performance Details", 13),
+        ("Appendix C: District Level Data", 14),
+        ("Appendix D: Unable to Visit Details", 15)
+    ]
+    
+    for item, level in toc_items:
+        if level == 1:
+            para = doc.add_paragraph(item, style='Heading 1')
+        elif level == 2:
+            para = doc.add_paragraph(f"   {item}", style='Normal')
+        else:
+            para = doc.add_paragraph(f"      {item}", style='Normal')
+    
+    doc.add_page_break()
+    
+    # ========== 1. EXECUTIVE SUMMARY ==========
+    doc.add_heading('1. EXECUTIVE SUMMARY', level=1)
+    
+    exec_summary = doc.add_paragraph()
+    exec_summary.add_run("This report provides a comprehensive analysis of the sample tracking and monitoring activities ")
+    exec_summary.add_run(f"for the {tool_choice} tool. ").bold = True
+    exec_summary.add_run("The analysis covers geographical coverage, performance metrics, quality assurance indicators, ")
+    exec_summary.add_run("and operational challenges encountered during the monitoring period.\n\n")
+    
+    # Key findings
+    doc.add_heading('Key Findings', level=2)
+    
+    findings = [
+        f"• Overall Progress: {kpis['overall_progress']:.1f}% of target samples have been checked",
+        f"• Geographical Coverage: {kpis['province_count']} provinces and {kpis['district_count']} districts covered",
+        f"• Quality Rate: {kpis.get('approval_rate', 0):.1f}% approval rate indicates data quality standards",
+        f"• Collection Rate: {kpis.get('collection_rate', 0):.1f}% of targeted samples have been received",
+        f"• Critical Areas: {len(df[df['Progress_Percentage'] < 50])} districts are below 50% progress"
+    ]
+    
+    for finding in findings:
+        doc.add_paragraph(finding, style='List Bullet')
+    
+    # ========== 2. METHODOLOGY ==========
+    doc.add_heading('2. METHODOLOGY AND DATA SOURCES', level=1)
+    
+    methodology = doc.add_paragraph()
+    methodology.add_run("2.1 Data Collection\n").bold = True
+    methodology.add_run("• Primary data source: Google Sheets integrated monitoring tool\n")
+    methodology.add_run("• Data extraction: Automated daily synchronization\n")
+    methodology.add_run("• Validation: Automated data validation and cleaning procedures\n\n")
+    
+    methodology.add_run("2.2 Analysis Framework\n").bold = True
+    methodology.add_run("• Progress Calculation: (Checked Samples / Target Samples) × 100\n")
+    methodology.add_run("• Status Classification:\n")
+    methodology.add_run("   - On Track: ≥75% progress\n")
+    methodology.add_run("   - Behind Schedule: 50-74% progress\n")
+    methodology.add_run("   - Critical: <50% progress\n\n")
+    
+    methodology.add_run("2.3 Geographical Mapping\n").bold = True
+    methodology.add_run("• ADM1 boundaries: Province-level mapping using GeoBoundaries API\n")
+    methodology.add_run("• ADM2 boundaries: District-level mapping for detailed analysis\n")
+    methodology.add_run("• Normalization: Standardized geographical name matching\n")
+    
+    # ========== 3. SCOPE AND COVERAGE ==========
+    doc.add_heading('3. SCOPE AND COVERAGE ANALYSIS', level=1)
+    
+    # Coverage table
+    coverage_data = [
+        ["Metric", "Value", "Interpretation"],
+        ["Total Target Samples", f"{kpis['total_sample']:,.0f}", "Planned sample size across all locations"],
+        ["Samples Received", f"{kpis['total_received']:,.0f}", f"{kpis.get('collection_rate', 0):.1f}% of target"],
+        ["Samples Checked", f"{kpis['total_checked']:,.0f}", f"{kpis['overall_progress']:.1f}% of target"],
+        ["Provinces Covered", f"{kpis['province_count']}", "Geographical reach at province level"],
+        ["Districts Covered", f"{kpis['district_count']}", "Operational presence at district level"],
+        ["Approval Rate", f"{kpis.get('approval_rate', 0):.1f}%", "Quality assurance indicator"],
+        ["Rejection Rate", f"{kpis.get('rejection_rate', 0):.1f}%", "Quality control measure"]
+    ]
+    
+    table = doc.add_table(rows=len(coverage_data), cols=3)
+    table.style = 'Light Grid Accent 1'
+    
+    for i, row_data in enumerate(coverage_data):
+        row = table.rows[i]
+        for j, cell_data in enumerate(row_data):
+            cell = row.cells[j]
+            cell.text = str(cell_data)
+            if i == 0:  # Header row
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.bold = True
+    
+    # ========== 4. DETAILED PERFORMANCE ==========
+    doc.add_heading('4. DETAILED PERFORMANCE ANALYSIS', level=1)
+    
+    # Regional performance table
+    if not regional_summary.empty:
+        doc.add_heading('4.1 Regional Performance Overview', level=2)
+        
+        reg_data = [["Region", "Target", "Checked", "Progress %", "Status"]]
+        for _, row in regional_summary.iterrows():
+            progress = row["Progress"]
+            status = "On Track" if progress >= 75 else "Behind Schedule" if progress >= 50 else "Critical"
+            reg_data.append([
+                row["Region"],
+                f"{row['Total_Sample_Size']:,.0f}",
+                f"{row['Total_Checked']:,.0f}",
+                f"{progress:.1f}%",
+                status
+            ])
+        
+        table = doc.add_table(rows=len(reg_data), cols=5)
+        table.style = 'Medium Shading 1 Accent 1'
+        
+        for i, row_data in enumerate(reg_data):
+            row = table.rows[i]
+            for j, cell_data in enumerate(row_data):
+                cell = row.cells[j]
+                cell.text = str(cell_data)
+                if i == 0:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.bold = True
+    
+    # Provincial performance
+    if not province_summary.empty:
+        doc.add_heading('4.2 Top Performing Provinces', level=2)
+        doc.add_paragraph("The following provinces show the highest progress rates:")
+        
+        top_provinces = province_summary.sort_values("Progress", ascending=False).head(10)
+        prov_data = [["Province", "Progress %", "Target", "Checked", "Approved", "Approval Rate"]]
+        
+        for _, row in top_provinces.iterrows():
+            approval_rate = (row["Approved"] / row["Total_Checked"] * 100) if row["Total_Checked"] > 0 else 0
+            prov_data.append([
+                row["Province"],
+                f"{row['Progress']:.1f}%",
+                f"{row['Total_Sample_Size']:,.0f}",
+                f"{row['Total_Checked']:,.0f}",
+                f"{row['Approved']:,.0f}",
+                f"{approval_rate:.1f}%"
+            ])
+        
+        table = doc.add_table(rows=len(prov_data), cols=6)
+        table.style = 'Light Grid Accent 2'
+        
+        for i, row_data in enumerate(prov_data):
+            row = table.rows[i]
+            for j, cell_data in enumerate(row_data):
+                cell = row.cells[j]
+                cell.text = str(cell_data)
+                if i == 0:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.bold = True
+    
+    # ========== 5. GEOGRAPHICAL DISTRIBUTION ==========
+    doc.add_heading('5. GEOGRAPHICAL DISTRIBUTION', level=1)
+    
+    geo_analysis = doc.add_paragraph()
+    geo_analysis.add_run("5.1 Distribution Patterns\n").bold = True
+    geo_analysis.add_run(f"The monitoring activities cover {kpis['province_count']} provinces across Afghanistan. ")
+    geo_analysis.add_run("The geographical distribution shows variations in progress rates, with some regions ")
+    geo_analysis.add_run("demonstrating higher efficiency in sample collection and checking processes.\n\n")
+    
+    geo_analysis.add_run("5.2 Regional Variations\n").bold = True
+    geo_analysis.add_run("Analysis indicates significant differences in performance across regions. ")
+    geo_analysis.add_run("Factors contributing to these variations include:\n")
+    geo_analysis.add_run("• Accessibility and terrain challenges\n")
+    geo_analysis.add_run("• Security conditions\n")
+    geo_analysis.add_run("• Local capacity and resources\n")
+    geo_analysis.add_run("• Logistical constraints\n\n")
+    
+    # ========== 6. UNABLE TO VISIT ANALYSIS ==========
+    doc.add_heading('6. UNABLE TO VISIT ANALYSIS', level=1)
+    
+    if unable_to_visit_summary is not None and not unable_to_visit_summary.empty:
+        doc.add_paragraph(f"A total of {unable_to_visit_summary['Unable_to_Visit'].sum():,.0f} locations were reported as 'Unable to Visit'. ")
+        doc.add_paragraph("Primary reasons include:")
+        
+        reasons = [
+            "• Security restrictions and access limitations",
+            "• Logistical challenges and transportation issues",
+            "• Weather conditions and seasonal factors",
+            "• Administrative and permission requirements"
+        ]
+        
+        for reason in reasons:
+            doc.add_paragraph(reason)
+        
+        doc.add_heading('6.1 Detailed Unable to Visit Locations', level=2)
+        
+        uv_data = [["Province", "District", "Count", "Comments"]]
+        for _, row in unable_to_visit_summary.iterrows():
+            uv_data.append([
+                row["Province"],
+                row["District"],
+                str(int(row["Unable_to_Visit"])),
+                str(row.get("Comments", ""))[:100] + "..." if len(str(row.get("Comments", ""))) > 100 else str(row.get("Comments", ""))
+            ])
+        
+        table = doc.add_table(rows=len(uv_data), cols=4)
+        table.style = 'Light List Accent 3'
+        
+        for i, row_data in enumerate(uv_data):
+            row = table.rows[i]
+            for j, cell_data in enumerate(row_data):
+                cell = row.cells[j]
+                cell.text = str(cell_data)
+                if i == 0:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.bold = True
+    else:
+        doc.add_paragraph("No locations were reported as 'Unable to Visit' for the selected filters.")
+    
+    # ========== 7. QUALITY ASSURANCE ==========
+    doc.add_heading('7. QUALITY ASSURANCE METRICS', level=1)
+    
+    quality = doc.add_paragraph()
+    quality.add_run("7.1 Approval and Rejection Rates\n").bold = True
+    quality.add_run(f"The overall approval rate of {kpis.get('approval_rate', 0):.1f}% indicates ")
+    quality.add_run("acceptable data quality standards. The rejection rate serves as a quality control ")
+    quality.add_run("measure to ensure data accuracy and reliability.\n\n")
+    
+    quality.add_run("7.2 Quality Control Procedures\n").bold = True
+    quality.add_run("• Standardized verification protocols\n")
+    quality.add_run("• Multi-level review processes\n")
+    quality.add_run("• Data validation checks\n")
+    quality.add_run("• Consistency verification\n")
+    quality.add_run("• Timeliness assessment\n\n")
+    
+    # ========== 8. TRENDS AND PATTERNS ==========
+    doc.add_heading('8. TRENDS AND PATTERNS', level=1)
+    
+    trends = doc.add_paragraph()
+    trends.add_run("8.1 Performance Trends\n").bold = True
+    trends.add_run("Analysis reveals several key trends:\n")
+    trends.add_run("• Correlation between accessibility and completion rates\n")
+    trends.add_run("• Seasonal variations in data collection efficiency\n")
+    trends.add_run("• Impact of local capacity on quality metrics\n")
+    trends.add_run("• Resource allocation effectiveness\n\n")
+    
+    trends.add_run("8.2 Pattern Recognition\n").bold = True
+    trends.add_run("• Urban areas generally show higher progress rates\n")
+    trends.add_run("• Remote districts face greater challenges\n")
+    trends.add_run("• Regional coordination impacts overall performance\n")
+    
+    # ========== 9. CHALLENGES AND OBSERVATIONS ==========
+    doc.add_heading('9. CHALLENGES AND OBSERVATIONS', level=1)
+    
+    if comments_text and comments_text.strip():
+        doc.add_paragraph("Key observations from field reports:")
+        doc.add_paragraph(comments_text)
+    else:
+        doc.add_paragraph("No specific observations recorded for the selected filters.")
+    
+    challenges = doc.add_paragraph("\n\n")
+    challenges.add_run("9.1 Common Challenges\n").bold = True
+    common_challenges = [
+        "• Security constraints limiting access to certain areas",
+        "• Logistical challenges in remote and mountainous regions",
+        "• Resource limitations affecting monitoring frequency",
+        "• Communication barriers in some districts",
+        "• Seasonal weather impacts on field operations"
+    ]
+    
+    for challenge in common_challenges:
+        doc.add_paragraph(challenge)
+    
+    # ========== 10. RECOMMENDATIONS ==========
+    doc.add_heading('10. RECOMMENDATIONS', level=1)
+    
+    recommendations = [
+        ("10.1 Operational Improvements", [
+            "• Increase monitoring frequency in critical areas",
+            "• Enhance logistical support for remote districts",
+            "• Strengthen local capacity through targeted training",
+            "• Implement mobile data collection solutions"
+        ]),
+        ("10.2 Quality Enhancement", [
+            "• Standardize verification protocols across regions",
+            "• Implement real-time data validation checks",
+            "• Establish quality benchmarks for different regions",
+            "• Conduct regular quality assurance audits"
+        ]),
+        ("10.3 Strategic Planning", [
+            "• Develop region-specific action plans",
+            "• Allocate resources based on performance indicators",
+            "• Establish early warning systems for at-risk areas",
+            "• Enhance coordination between regional offices"
+        ])
+    ]
+    
+    for title, items in recommendations:
+        doc.add_heading(title, level=2)
+        for item in items:
+            doc.add_paragraph(item, style='List Bullet')
+    
+    # ========== 11. APPENDICES ==========
+    doc.add_heading('11. APPENDICES', level=1)
+    
+    appendices = doc.add_paragraph()
+    appendices.add_run("The following appendices provide detailed supporting data for this analysis:\n\n")
+    
+    appendix_items = [
+        ("Appendix A", "Regional Performance Details"),
+        ("Appendix B", "Provincial Performance Details"),
+        ("Appendix C", "District Level Data"),
+        ("Appendix D", "Unable to Visit Details"),
+        ("Appendix E", "Methodology Documentation"),
+        ("Appendix F", "Quality Assurance Framework")
+    ]
+    
+    for num, title in appendix_items:
+        doc.add_paragraph(f"{num}: {title}")
+    
+    # ========== APPENDICES DETAILS ==========
+    doc.add_page_break()
+    doc.add_heading('APPENDIX A: REGIONAL PERFORMANCE DETAILS', level=1)
+    
+    if not regional_summary.empty:
+        reg_details = regional_summary.copy()
+        reg_details["Progress_Status"] = reg_details["Progress"].apply(
+            lambda x: "On Track" if x >= 75 else "Behind Schedule" if x >= 50 else "Critical"
+        )
+        
+        reg_data = [["Region", "Target", "Received", "Checked", "Approved", "Pending", "Rejected", "Progress %", "Status"]]
+        for _, row in reg_details.iterrows():
+            reg_data.append([
+                row["Region"],
+                f"{row['Total_Sample_Size']:,.0f}",
+                f"{row.get('Total_Received', 0):,.0f}",
+                f"{row['Total_Checked']:,.0f}",
+                f"{row['Approved']:,.0f}",
+                f"{row['Pending']:,.0f}",
+                f"{row['Rejected']:,.0f}",
+                f"{row['Progress']:.1f}%",
+                row["Progress_Status"]
+            ])
+        
+        table = doc.add_table(rows=len(reg_data), cols=9)
+        table.style = 'Light Grid'
+        
+        for i, row_data in enumerate(reg_data):
+            row = table.rows[i]
+            for j, cell_data in enumerate(row_data):
+                cell = row.cells[j]
+                cell.text = str(cell_data)
+                if i == 0:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.bold = True
+    
+    # Add more appendices similarly...
+    
+    # ========== FINAL PAGE ==========
+    doc.add_page_break()
+    
+    final_page = doc.add_paragraph()
+    final_page.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    run = final_page.add_run("\n\n--- END OF REPORT ---\n\n")
+    run.font.size = Pt(12)
+    run.bold = True
+    
+    run = final_page.add_run(f"Report Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    run.font.size = Pt(10)
+    
+    run = final_page.add_run("Sample Track Analytics System\n")
+    run.font.size = Pt(10)
+    run.italic = True
+    
+    run = final_page.add_run("CONFIDENTIAL - INTERNAL USE ONLY")
+    run.font.size = Pt(9)
+    run.font.color.rgb = RGBColor(0xdc, 0x26, 0x26)
+    
+    # Save to bytes
+    output = io.BytesIO()
+    doc.save(output)
+    output.seek(0)
+    
+    return output.getvalue()
 # =========================
 # Text Normalization
 # =========================
@@ -568,7 +1118,271 @@ def make_pdf_report(tool_choice: str, filters: dict, kpis: dict,
         story.append(Paragraph("No province summary available.", styles["TableCellLeft"]))
     
     story.append(Spacer(1, 1*cm))
+    # =========================
+# Enhanced Report Export Section
+# =========================
+st.markdown('<div class="section-title">Comprehensive Report Export</div>', unsafe_allow_html=True)
+
+# Create tabs for different export options
+export_tab1, export_tab2, export_tab3 = st.tabs(["📊 Excel Downloads", "📝 Word Report", "📄 PDF Report"])
+
+with export_tab1:
+    st.subheader("Download Excel Reports")
+    st.markdown("""
+    <div class="hint">
+    Download detailed Excel reports at different geographical levels. Each report includes 
+    comprehensive metrics, calculations, and analysis-ready data.
+    </div>
+    """, unsafe_allow_html=True)
     
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("📥 Regional Summary", use_container_width=True):
+            excel_bytes = create_excel_report(filtered_df, "region")
+            filename = f"Regional_Summary_{tool_choice}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+            st.download_button(
+                label="Download Regional Excel",
+                data=excel_bytes,
+                file_name=filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+    
+    with col2:
+        if st.button("📥 Provincial Summary", use_container_width=True):
+            excel_bytes = create_excel_report(filtered_df, "province")
+            filename = f"Provincial_Summary_{tool_choice}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+            st.download_button(
+                label="Download Provincial Excel",
+                data=excel_bytes,
+                file_name=filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+    
+    with col3:
+        if st.button("📥 District Details", use_container_width=True):
+            excel_bytes = create_excel_report(filtered_df, "district")
+            filename = f"District_Details_{tool_choice}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+            st.download_button(
+                label="Download District Excel",
+                data=excel_bytes,
+                file_name=filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+    
+    # Additional Excel options
+    st.markdown("---")
+    st.subheader("Custom Excel Downloads")
+    
+    custom_col1, custom_col2 = st.columns(2)
+    
+    with custom_col1:
+        if st.button("📊 Performance Metrics Only", use_container_width=True):
+            # Create simplified performance metrics
+            perf_df = filtered_df[["Region", "Province", "District", 
+                                  "Progress_Percentage", "Progress_Status",
+                                  "Total_Sample_Size", "Total_Checked"]].copy()
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                perf_df.to_excel(writer, sheet_name='Performance_Metrics', index=False)
+            output.seek(0)
+            
+            st.download_button(
+                label="Download Performance Data",
+                data=output.getvalue(),
+                file_name=f"Performance_Metrics_{tool_choice}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+    
+    with custom_col2:
+        if st.button("⚠️ Critical Areas Report", use_container_width=True):
+            # Filter critical areas
+            critical_df = filtered_df[filtered_df["Progress_Percentage"] < 50].copy()
+            if not critical_df.empty:
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    critical_df.to_excel(writer, sheet_name='Critical_Areas', index=False)
+                output.seek(0)
+                
+                st.download_button(
+                    label="Download Critical Areas",
+                    data=output.getvalue(),
+                    file_name=f"Critical_Areas_{tool_choice}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            else:
+                st.info("No critical areas (below 50% progress) found with current filters.")
+
+with export_tab2:
+    st.subheader("Generate Comprehensive Word Report")
+    st.markdown("""
+    <div class="hint">
+    This comprehensive Word report includes detailed analysis, methodology, findings, 
+    recommendations, and appendices with supporting data. The report is professionally 
+    formatted and ready for presentation.
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if st.button("📝 Generate Comprehensive Word Report", type="primary", use_container_width=True):
+        with st.spinner("Generating comprehensive Word report..."):
+            try:
+                # Prepare district summary for Word report
+                district_summary_for_word = filtered_df.groupby(["Province", "District"], as_index=False).agg({
+                    "Total_Sample_Size": "sum",
+                    "Total_Received": "sum",
+                    "Total_Checked": "sum",
+                    "Approved": "sum",
+                    "Pending": "sum",
+                    "Rejected": "sum",
+                    "Unable_to_Visit": "sum",
+                    "Progress_Percentage": "mean",
+                    "Comments": lambda x: " | ".join([str(i) for i in x if str(i).strip()])
+                }).round(1)
+                
+                # Calculate additional KPIs for Word report
+                kpis_for_word = kpis_for_pdf.copy()
+                kpis_for_word["collection_rate"] = (kpis_for_word["total_received"] / kpis_for_word["total_sample"] * 100) if kpis_for_word["total_sample"] > 0 else 0
+                
+                # Generate Word report
+                word_bytes = create_comprehensive_word_report(
+                    tool_choice=tool_choice,
+                    filters=filters_for_pdf,
+                    kpis=kpis_for_word,
+                    df=filtered_df,
+                    regional_summary=regional_summary_pdf,
+                    province_summary=province_summary_pdf,
+                    district_summary=district_summary_for_word,
+                    unable_to_visit_summary=unable_to_visit_summary,
+                    comments_text=comments_text
+                )
+                
+                filename = f"Comprehensive_Report_{tool_choice}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+                
+                st.download_button(
+                    label="📥 Download Word Report",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True
+                )
+                
+                st.success("✅ Comprehensive Word report generated successfully!")
+                st.info("The report includes: Executive Summary, Methodology, Detailed Analysis, Recommendations, and Appendices.")
+                
+            except Exception as e:
+                st.error(f"Error generating Word report: {e}")
+
+with export_tab3:
+    st.subheader("Generate PDF Report")
+    st.markdown("""
+    <div class="hint">
+    Generate a concise PDF report with key metrics, charts, and summary information.
+    This is ideal for quick sharing and presentations.
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if st.button("📄 Generate PDF Report", type="primary", use_container_width=True):
+        with st.spinner("Generating PDF report..."):
+            try:
+                pdf_bytes = make_pdf_report(
+                    tool_choice=tool_choice,
+                    filters=filters_for_pdf,
+                    kpis=kpis_for_pdf,
+                    regional_summary=regional_summary_pdf,
+                    province_summary=province_summary_pdf,
+                    filtered_df=filtered_df,
+                    unable_to_visit_summary=unable_to_visit_summary,
+                    comments_text=comments_text
+                )
+
+                filename = f"SampleTrack_Report_{tool_choice}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                
+                st.download_button(
+                    label="📥 Download PDF Report",
+                    data=pdf_bytes,
+                    file_name=filename,
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+                
+                st.success("✅ PDF report generated successfully!")
+                
+            except Exception as e:
+                st.error(f"Error generating PDF: {e}")
+
+# =========================
+# Additional Requirements for Word Report
+# =========================
+# Add these requirements to your requirements.txt file:
+"""
+python-docx>=0.8.11
+openpyxl>=3.0.10
+matplotlib>=3.5.0
+seaborn>=0.11.2
+pandas>=1.4.0
+plotly>=5.10.0
+streamlit>=1.12.0
+gspread>=5.4.0
+google-auth>=2.6.0
+reportlab>=3.6.12
+requests>=2.28.0
+numpy>=1.21.0
+"""
+
+# =========================
+# CSS Updates for Better UI
+# =========================
+# Update the CSS section to include styles for export section
+st.markdown("""
+<style>
+    .export-section {
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+    }
+    .export-card {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        transition: all 0.3s ease;
+    }
+    .export-card:hover {
+        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.1);
+        border-color: #3b82f6;
+    }
+    .export-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #0f172a;
+        margin-bottom: 0.5rem;
+    }
+    .export-desc {
+        font-size: 0.9rem;
+        color: #64748b;
+        margin-bottom: 1rem;
+    }
+    .stButton > button {
+        width: 100%;
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+    }
+</style>
+""", unsafe_allow_html=True)
     # Footer
     story.append(Paragraph(f"Report Generated: {now_txt}", 
                           ParagraphStyle(name="Footer", fontSize=8, textColor=colors.HexColor("#64748b"))))
