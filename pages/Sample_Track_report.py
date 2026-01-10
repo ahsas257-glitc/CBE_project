@@ -68,7 +68,7 @@ st.markdown('<div class="main-header">📊 Sample Track Analytics Dashboard</div
 # =========================
 # Google Sheet Config
 # =========================
-SPREADSHEET_KEY = "1lkztBZ4eG1BQx-52XgnA6w8YIiw-Sm85pTlQQziurfw"
+SPREADSHEET_KEY = "https://docs.google.com/spreadsheets/d/1lkztBZ4eG1BQx-52XgnA6w8YIiw-Sm85pTlQQziurfw/edit?gid=1114674433#gid=1114674433"
 WORKSHEET_NAME = "Test"
 
 # =========================
