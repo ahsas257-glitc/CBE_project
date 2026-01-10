@@ -6,15 +6,12 @@ import plotly.graph_objects as go
 import plotly.express as px
 import requests
 from io import BytesIO
-import json
 
 # PDF generation (ReportLab)
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib import colors
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 
@@ -84,6 +81,8 @@ st.markdown("""
         padding: 10px 12px;
         color: #334155;
         font-size: 0.9rem;
+        margin-top: 8px;
+        margin-bottom: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -103,10 +102,14 @@ def norm_text(x: str) -> str:
     s = str(x).strip().lower()
     s = s.replace("_", " ").replace("'", "").replace("`", "")
     s = " ".join(s.split())
+
+    # common variants seen in datasets
     s = s.replace("sar e pul", "sar-e-pul")
     s = s.replace("sare pul", "sar-e-pul")
     s = s.replace("maidan wardak", "wardak")
     s = s.replace("maydan wardak", "wardak")
+    s = s.replace("panjshir", "panjsher")
+    s = s.replace("jawzjan", "jowzjan")  # sometimes appears as Jowzjan
     return s
 
 def remove_total_rows(df: pd.DataFrame) -> pd.DataFrame:
@@ -222,41 +225,46 @@ def load_google_sheet():
     return df
 
 # =========================
-# GeoJSON via geoBoundaries API (ADM1 + ADM2)
+# GeoBoundaries Fetchers (ADM1 + ADM2)
 # =========================
 @st.cache_data(ttl=86400)
-def fetch_geoboundaries_geojson(adm_level="ADM1", release="gbOpen", iso="AFG", simplified=True, timeout=60):
+def fetch_geoboundaries_geojson(adm_level: str, simplified: bool = True) -> dict:
     """
-    Reliable geoBoundaries downloader.
-    Returns GeoJSON (FeatureCollection).
+    Fetch GeoJSON from geoBoundaries API (open license).
+    adm_level: "ADM1" for provinces, "ADM2" for districts
+    simplified: use simplified geometry when available (faster)
     """
-    api_url = f"https://www.geoboundaries.org/api/current/{release}/{iso}/{adm_level}/"
-    meta_resp = requests.get(api_url, timeout=timeout)
-    meta_resp.raise_for_status()
-    meta = meta_resp.json()
+    adm_level = str(adm_level).upper().strip()
+    if adm_level not in ("ADM1", "ADM2"):
+        raise ValueError("adm_level must be ADM1 or ADM2")
+
+    # API endpoint returns JSON metadata
+    api_url = f"https://www.geoboundaries.org/api/current/gbOpen/AFG/{adm_level}/"
+    r = requests.get(api_url, timeout=45)
+    r.raise_for_status()
+    meta = r.json()
     if isinstance(meta, list) and len(meta) > 0:
         meta = meta[0]
 
-    # pick a download URL
-    geo_url = meta.get("simplifiedGeometryGeoJSON") if simplified else meta.get("gjDownloadURL")
-    if not geo_url:
-        geo_url = meta.get("gjDownloadURL")
+    if simplified:
+        geo_url = meta.get("simplifiedGeometryGeoJSON") or meta.get("gjDownloadURL")
+    else:
+        geo_url = meta.get("gjDownloadURL") or meta.get("simplifiedGeometryGeoJSON")
+
     if not geo_url:
         return {"type": "FeatureCollection", "features": []}
 
-    g = requests.get(geo_url, timeout=timeout)
+    g = requests.get(geo_url, timeout=90)
     g.raise_for_status()
-
-    # ensure it's JSON (not HTML)
-    txt = g.text.strip()
-    if not (txt.startswith("{") or txt.startswith("[")):
-        raise ValueError("GeoJSON download did not return JSON (blocked or redirected).")
-
     return g.json()
 
-def prepare_geojson_for_matching(geojson: dict, name_candidates=("shapeName", "NAME_1", "NAME", "name")) -> dict:
+def prepare_geojson_for_matching(geojson: dict, name_candidates=("shapeName", "NAME", "NAME_1", "NAME_2", "name")) -> dict:
+    """
+    Add properties.name_norm for matching with DataFrame normalized names.
+    name_candidates: try these property keys in order.
+    """
     for f in geojson.get("features", []):
-        props = f.get("properties", {})
+        props = f.get("properties", {}) or {}
         raw_name = ""
         for k in name_candidates:
             if k in props and props.get(k):
@@ -265,17 +273,6 @@ def prepare_geojson_for_matching(geojson: dict, name_candidates=("shapeName", "N
         props["name_norm"] = norm_text(raw_name)
         f["properties"] = props
     return geojson
-
-# =========================
-# Helper: choose property key for Plotly featureidkey
-# =========================
-def detect_featureidkey(geojson: dict, expected_prop="name_norm"):
-    """
-    Ensures we know where properties are stored.
-    We always set properties.name_norm in prepare_geojson_for_matching,
-    so featureidkey should be 'properties.name_norm'.
-    """
-    return "properties.name_norm"
 
 # =========================
 # PDF Report (NO comments)
@@ -330,7 +327,7 @@ def make_pdf_report(tool_choice: str, filters: dict, kpis: dict,
     f_rows = [
         ["Region", filters.get("region", "All")],
         ["Province", filters.get("province", "All")],
-        ["District", filters.get("district", "All")],
+        ["District(s)", filters.get("district", "All")],
         ["Progress Status", ", ".join(filters.get("status", ["All"]))],
     ]
     ft = Table([["Filter", "Value"]] + f_rows, colWidths=[4*cm, 11*cm])
@@ -434,7 +431,7 @@ st.sidebar.markdown("Filters & Controls")
 tool_choice = st.sidebar.selectbox(
     "Select Monitoring Tool",
     ["Total", "CBE", "PBs"],
-    help="Choose which columns to analyze based on the prefix (CBE-, PBs-, Total-)."
+    help="The app reads columns by prefix: CBE-, PBs-, or Total-. If Total- does not exist, Total is calculated as CBE + PBs."
 )
 
 try:
@@ -451,13 +448,20 @@ else:
     province_options = ["All"] + sorted(df["Province"].dropna().unique().tolist())
 selected_province = st.sidebar.selectbox("Select Province", province_options)
 
+# ✅ District multi-select (supports 2+ districts)
 if selected_province != "All":
-    district_options = ["All"] + sorted(df[df["Province"] == selected_province]["District"].dropna().unique().tolist())
+    district_options = sorted(df[df["Province"] == selected_province]["District"].dropna().unique().tolist())
 elif selected_region != "All":
-    district_options = ["All"] + sorted(df[df["Region"] == selected_region]["District"].dropna().unique().tolist())
+    district_options = sorted(df[df["Region"] == selected_region]["District"].dropna().unique().tolist())
 else:
-    district_options = ["All"] + sorted(df["District"].dropna().unique().tolist())
-selected_district = st.sidebar.selectbox("Select District", district_options)
+    district_options = sorted(df["District"].dropna().unique().tolist())
+
+selected_districts = st.sidebar.multiselect(
+    "Select District(s)",
+    options=district_options,
+    default=[],
+    help="Leave empty to include all districts."
+)
 
 progress_status = st.sidebar.multiselect(
     "Progress Status",
@@ -467,12 +471,16 @@ progress_status = st.sidebar.multiselect(
 
 # Apply filters
 filtered_df = df.copy()
+
 if selected_region != "All":
     filtered_df = filtered_df[filtered_df["Region"] == selected_region]
+
 if selected_province != "All":
     filtered_df = filtered_df[filtered_df["Province"] == selected_province]
-if selected_district != "All":
-    filtered_df = filtered_df[filtered_df["District"] == selected_district]
+
+if selected_districts:
+    filtered_df = filtered_df[filtered_df["District"].isin(selected_districts)]
+
 if "All" not in progress_status:
     filtered_df = filtered_df[filtered_df["Progress_Status"].isin(progress_status)]
 
@@ -530,23 +538,25 @@ with c4:
     """, unsafe_allow_html=True)
 
 # =========================
-# Maps (ADM1 + ADM2)
+# Maps (ADM1 + ADM2) with correct All behavior + Multi-district
 # =========================
 st.markdown('<div class="section-title">Geographic Analysis</div>', unsafe_allow_html=True)
 
-# Load GeoJSON (ADM1 + ADM2) using your requested function style
 with st.spinner("Loading boundary layers (ADM1 and ADM2)..."):
     try:
         adm1_geojson = fetch_geoboundaries_geojson("ADM1", simplified=True)  # provinces
         adm2_geojson = fetch_geoboundaries_geojson("ADM2", simplified=True)  # districts
-        adm1_geojson = prepare_geojson_for_matching(adm1_geojson)
+
+        adm1_geojson = prepare_geojson_for_matching(adm1_geojson, name_candidates=("shapeName", "NAME_1", "NAME", "name"))
         adm2_geojson = prepare_geojson_for_matching(adm2_geojson, name_candidates=("shapeName", "NAME_2", "NAME", "name"))
     except Exception as e:
         st.error(f"Map layers could not be loaded. {e}")
         adm1_geojson = {"type": "FeatureCollection", "features": []}
         adm2_geojson = {"type": "FeatureCollection", "features": []}
 
-# Province map (Afghanistan)
+# ---------- ADM1: Afghanistan Province Map ----------
+st.markdown('<div class="section-title">Afghanistan (ADM1 - Provinces)</div>', unsafe_allow_html=True)
+
 if adm1_geojson.get("features"):
     prov_summary = filtered_df.groupby(["Province", "_prov_norm"], as_index=False).agg({
         "Total_Sample_Size":"sum",
@@ -555,6 +565,7 @@ if adm1_geojson.get("features"):
         "Rejected":"sum",
         "Pending":"sum"
     })
+
     prov_summary["Progress_Percentage"] = np.where(
         prov_summary["Total_Sample_Size"] > 0,
         (prov_summary["Total_Checked"] / prov_summary["Total_Sample_Size"]) * 100.0,
@@ -581,65 +592,140 @@ if adm1_geojson.get("features"):
         range_color=[0, 100],
         title=""
     )
-    fig_afg.update_geos(fitbounds="locations", visible=False)
+
+    # ✅ When Province = All, show full Afghanistan (no zoom to locations)
+    if selected_province == "All":
+        fig_afg.update_geos(visible=False, fitbounds=None)
+    else:
+        fig_afg.update_geos(visible=False, fitbounds="locations")
+
     fig_afg.update_layout(height=520, margin=dict(l=0, r=0, t=10, b=0))
     st.plotly_chart(fig_afg, use_container_width=True)
 else:
-    st.warning("ADM1 map is not available (empty GeoJSON). Check outbound internet access.")
+    st.warning("ADM1 map could not be loaded. Your hosting may block outbound internet access.")
 
-# District map inside selected province
-st.markdown('<div class="section-title">Selected Province - District Level (ADM2)</div>', unsafe_allow_html=True)
+# ---------- ADM2: District Map ----------
+st.markdown('<div class="section-title">Districts (ADM2)</div>', unsafe_allow_html=True)
 
-if selected_province != "All" and adm2_geojson.get("features"):
-    # Prepare district summary for the selected province only
-    df_prov = filtered_df[filtered_df["Province"] == selected_province].copy()
-
-    dist_summary = df_prov.groupby(["District", "_dist_norm"], as_index=False).agg({
-        "Total_Sample_Size":"sum",
-        "Total_Checked":"sum",
-        "Approved":"sum",
-        "Rejected":"sum",
-        "Pending":"sum"
-    })
-    dist_summary["Progress_Percentage"] = np.where(
-        dist_summary["Total_Sample_Size"] > 0,
-        (dist_summary["Total_Checked"] / dist_summary["Total_Sample_Size"]) * 100.0,
-        0
-    ).round(1)
-
-    # IMPORTANT:
-    # ADM2 polygons include province + district names. Some datasets store only district names,
-    # others store full names. We match by district name normalization via properties.name_norm.
-    fig_adm2 = px.choropleth(
-        dist_summary,
-        geojson=adm2_geojson,
-        locations="_dist_norm",
-        featureidkey="properties.name_norm",
-        color="Progress_Percentage",
-        hover_name="District",
-        hover_data={
-            "Progress_Percentage": ":.1f",
-            "Total_Sample_Size": ":,.0f",
-            "Total_Checked": ":,.0f",
-            "Approved": ":,.0f",
-            "Rejected": ":,.0f",
-            "Pending": ":,.0f",
-            "_dist_norm": False
-        },
-        color_continuous_scale="RdYlGn",
-        range_color=[0, 100],
-        title=""
-    )
-
-    # Fit map to the selected districts (if found)
-    fig_adm2.update_geos(fitbounds="locations", visible=False)
-    fig_adm2.update_layout(height=520, margin=dict(l=0, r=0, t=10, b=0))
-    st.plotly_chart(fig_adm2, use_container_width=True)
-
-elif selected_province == "All":
-    st.info("Select a Province from the sidebar to see district-level map.")
+if not adm2_geojson.get("features"):
+    st.warning("ADM2 map could not be loaded. Your hosting may block outbound internet access.")
 else:
-    st.warning("ADM2 map is not available (empty GeoJSON).")
+    # If a province is selected, show districts inside that province (best performance)
+    if selected_province != "All":
+        df_scope = filtered_df[filtered_df["Province"] == selected_province].copy()
+        if df_scope.empty:
+            st.info("No district data for selected filters.")
+        else:
+            dist_summary = df_scope.groupby(["District", "_dist_norm"], as_index=False).agg({
+                "Total_Sample_Size":"sum",
+                "Total_Checked":"sum",
+                "Approved":"sum",
+                "Rejected":"sum",
+                "Pending":"sum"
+            })
+
+            dist_summary["Progress_Percentage"] = np.where(
+                dist_summary["Total_Sample_Size"] > 0,
+                (dist_summary["Total_Checked"] / dist_summary["Total_Sample_Size"]) * 100.0,
+                0
+            ).round(1)
+
+            # ✅ Multi-district highlight (show all selected districts)
+            if selected_districts:
+                dist_summary = dist_summary[dist_summary["District"].isin(selected_districts)]
+
+            if dist_summary.empty:
+                st.info("No matching districts found for the selected district filter.")
+            else:
+                fig_dist = px.choropleth(
+                    dist_summary,
+                    geojson=adm2_geojson,
+                    locations="_dist_norm",
+                    featureidkey="properties.name_norm",
+                    color="Progress_Percentage",
+                    hover_name="District",
+                    hover_data={
+                        "Progress_Percentage": ":.1f",
+                        "Total_Sample_Size": ":,.0f",
+                        "Total_Checked": ":,.0f",
+                        "Approved": ":,.0f",
+                        "Rejected": ":,.0f",
+                        "Pending": ":,.0f",
+                        "_dist_norm": False
+                    },
+                    color_continuous_scale="RdYlGn",
+                    range_color=[0, 100],
+                    title=""
+                )
+                # Zoom to selected districts (or all districts in province)
+                fig_dist.update_geos(visible=False, fitbounds="locations")
+                fig_dist.update_layout(height=520, margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig_dist, use_container_width=True)
+
+    # Province = All: show district map across all Afghanistan
+    else:
+        st.markdown(
+            '<div class="hint">'
+            'ADM2 (district) map for all Afghanistan can be heavy. '
+            'For faster performance, select a province.'
+            '</div>',
+            unsafe_allow_html=True
+        )
+
+        df_scope = filtered_df.copy()
+        if df_scope.empty:
+            st.info("No data for selected filters.")
+        else:
+            dist_summary = df_scope.groupby(["District", "_dist_norm"], as_index=False).agg({
+                "Total_Sample_Size":"sum",
+                "Total_Checked":"sum",
+                "Approved":"sum",
+                "Rejected":"sum",
+                "Pending":"sum"
+            })
+
+            dist_summary["Progress_Percentage"] = np.where(
+                dist_summary["Total_Sample_Size"] > 0,
+                (dist_summary["Total_Checked"] / dist_summary["Total_Sample_Size"]) * 100.0,
+                0
+            ).round(1)
+
+            # ✅ If user selected 2+ districts, show ALL of them
+            if selected_districts:
+                dist_summary = dist_summary[dist_summary["District"].isin(selected_districts)]
+
+            if dist_summary.empty:
+                st.info("No matching districts found for the selected district filter.")
+            else:
+                fig_dist_all = px.choropleth(
+                    dist_summary,
+                    geojson=adm2_geojson,
+                    locations="_dist_norm",
+                    featureidkey="properties.name_norm",
+                    color="Progress_Percentage",
+                    hover_name="District",
+                    hover_data={
+                        "Progress_Percentage": ":.1f",
+                        "Total_Sample_Size": ":,.0f",
+                        "Total_Checked": ":,.0f",
+                        "Approved": ":,.0f",
+                        "Rejected": ":,.0f",
+                        "Pending": ":,.0f",
+                        "_dist_norm": False
+                    },
+                    color_continuous_scale="RdYlGn",
+                    range_color=[0, 100],
+                    title=""
+                )
+
+                # ✅ If districts selected, zoom to them; otherwise show full country view
+                if selected_districts:
+                    fig_dist_all.update_geos(visible=False, fitbounds="locations")
+                else:
+                    fig_dist_all.update_geos(visible=False, fitbounds=None)
+
+                fig_dist_all.update_layout(height=560, margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig_dist_all, use_container_width=True)
 
 # =========================
 # Charts (NO lowess)
@@ -741,8 +827,9 @@ with right:
         "Pending":"sum",
         "Progress_Percentage":"mean"
     }).round(1)
+
     st.dataframe(
-        district_summary.sort_values("Progress_Percentage", ascending=False).head(30),
+        district_summary.sort_values("Progress_Percentage", ascending=False).head(50),
         use_container_width=True,
         height=420
     )
@@ -755,7 +842,7 @@ st.markdown('<div class="section-title">Report Export</div>', unsafe_allow_html=
 filters_for_pdf = {
     "region": selected_region,
     "province": selected_province,
-    "district": selected_district,
+    "district": ", ".join(selected_districts) if selected_districts else "All",
     "status": progress_status
 }
 kpis_for_pdf = {
@@ -773,14 +860,29 @@ colA, colB = st.columns([1, 2])
 with colA:
     if st.button("Generate PDF Report", type="primary", use_container_width=True):
         try:
+            # recompute regional_summary for the pdf (always defined)
+            regional_summary_pdf = filtered_df.groupby("Region", as_index=False).agg({
+                "Total_Sample_Size":"sum",
+                "Total_Checked":"sum",
+                "Approved":"sum",
+                "Rejected":"sum",
+                "Pending":"sum"
+            })
+            regional_summary_pdf["Progress"] = np.where(
+                regional_summary_pdf["Total_Sample_Size"] > 0,
+                (regional_summary_pdf["Total_Checked"] / regional_summary_pdf["Total_Sample_Size"]) * 100.0,
+                0
+            ).round(1)
+
             pdf_bytes = make_pdf_report(
                 tool_choice=tool_choice,
                 filters=filters_for_pdf,
                 kpis=kpis_for_pdf,
-                regional_summary=regional_summary,
+                regional_summary=regional_summary_pdf,
                 province_summary=province_summary,
                 filtered_df=filtered_df
             )
+
             filename = f"SampleTrack_Report_{tool_choice}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
             st.download_button(
                 "Download PDF",
@@ -795,7 +897,7 @@ with colA:
 with colB:
     st.markdown("""
     <div class="hint">
-    This PDF includes a cover section, filters, executive summary KPIs, regional performance, and top provinces.
+    This PDF includes: filters, executive summary KPIs, regional performance, and top provinces.
     </div>
     """, unsafe_allow_html=True)
 
@@ -803,4 +905,7 @@ with colB:
 # Footer
 # =========================
 st.markdown("---")
-st.caption(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Tool: {tool_choice} | Records: {len(filtered_df):,}")
+st.caption(
+    f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
+    f"Tool: {tool_choice} | Records: {len(filtered_df):,}"
+)
