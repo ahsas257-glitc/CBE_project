@@ -759,7 +759,8 @@ def create_comprehensive_word_report(
     trends.add_run("8.2 Pattern Recognition\n").bold = True
     trends.add_run("• Urban areas generally show higher progress rates\n")
     trends.add_run("• Remote districts face greater challenges\n")
-    trends.add.run("• Regional coordination impacts overall performance\n")
+    trends.add_run("• Regional coordination impacts overall performance\n")
+
     
     # ========== 9. CHALLENGES AND OBSERVATIONS ==========
     doc.add_heading('9. CHALLENGES AND OBSERVATIONS', level=1)
