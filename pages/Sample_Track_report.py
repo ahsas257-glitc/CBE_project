@@ -5,6 +5,16 @@ from datetime import datetime
 import plotly.graph_objects as go
 import plotly.express as px
 import requests
+from io import BytesIO
+
+# PDF generation (ReportLab)
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
+from reportlab.lib import colors
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+)
+from reportlab.lib.styles import getSampleStyleSheet
 
 # =========================
 # Page Config
@@ -17,73 +27,97 @@ st.set_page_config(
 )
 
 # =========================
-# Custom CSS
+# Custom CSS (English only)
 # =========================
 st.markdown("""
 <style>
     .main-header {
-        font-size: 2.5rem;
-        font-weight: 700;
+        font-size: 2.3rem;
+        font-weight: 800;
         color: #1E3A8A;
         margin-bottom: 1rem;
         text-align: center;
         padding: 1rem;
         background: linear-gradient(90deg, #EFF6FF, #DBEAFE);
-        border-radius: 10px;
+        border-radius: 12px;
         border-left: 6px solid #3B82F6;
     }
     .section-header {
-        font-size: 1.8rem;
-        font-weight: 600;
+        font-size: 1.6rem;
+        font-weight: 700;
         color: #1E40AF;
-        margin-top: 1.5rem;
-        margin-bottom: 1rem;
-        padding-bottom: 0.5rem;
+        margin-top: 1.2rem;
+        margin-bottom: 0.8rem;
+        padding-bottom: 0.4rem;
         border-bottom: 3px solid #60A5FA;
     }
     .metric-card {
         background: linear-gradient(135deg, #F0F9FF, #E0F2FE);
-        padding: 1.5rem;
-        border-radius: 15px;
+        padding: 1.2rem;
+        border-radius: 14px;
         border-left: 5px solid #0EA5E9;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-        transition: transform 0.3s ease;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.06);
     }
-    .metric-card:hover { transform: translateY(-5px); box-shadow: 0 8px 12px rgba(0, 0, 0, 0.1); }
-    .kpi-label { font-size: 0.9rem; font-weight: 500; color: #475569; text-transform: uppercase; letter-spacing: 0.5px; }
-    .kpi-value { font-size: 2.2rem; font-weight: 700; color: #1E3A8A; margin: 0.5rem 0; }
-    .kpi-change { font-size: 0.85rem; font-weight: 500; }
-    .positive { color: #059669; }
-    .negative { color: #DC2626; }
-    .neutral  { color: #6B7280; }
-
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] { border-radius: 8px 8px 0 0; padding: 10px 20px; background-color: #F3F4F6; }
-    .stTabs [aria-selected="true"] { background-color: #3B82F6 !important; color: white !important; }
+    .kpi-label {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #475569;
+        letter-spacing: 0.4px;
+        text-transform: uppercase;
+    }
+    .kpi-value {
+        font-size: 2.0rem;
+        font-weight: 800;
+        color: #1E3A8A;
+        margin: 0.4rem 0;
+    }
+    .kpi-change {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #334155;
+    }
+    .hint {
+        color: #64748B;
+        font-size: 0.9rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-header">📊 Sample Track Analytics Dashboard</div>', unsafe_allow_html=True)
 
 # =========================
-# Google Sheet Config
+# Google Sheet Config (from your URL)
 # =========================
-SPREADSHEET_KEY = "https://docs.google.com/spreadsheets/d/1lkztBZ4eG1BQx-52XgnA6w8YIiw-Sm85pTlQQziurfw/edit?gid=1114674433#gid=1114674433"
-WORKSHEET_NAME = "Test"
+# Your link:
+# https://docs.google.com/spreadsheets/d/1lkztBZ4eG1BQx-52XgnA6w8YIiw-Sm85pTlQQziurfw/edit?gid=1114674433#gid=1114674433
+SPREADSHEET_KEY = "1lkztBZ4eG1BQx-52XgnA6w8YIiw-Sm85pTlQQziurfw"
+WORKSHEET_NAME = "Test"  # Must match the sheet tab name
 
 # =========================
 # GeoJSON sources (Afghanistan)
 # =========================
-ADM1_GEOJSON_URL = "https://raw.githubusercontent.com/wmgeolab/geoBoundaries/9469f09/releaseData/gbOpen/AFG/ADM1/geoBoundaries-AFG-ADM1.geojson"
-ADM2_GEOJSON_URL = "https://raw.githubusercontent.com/wmgeolab/geoBoundaries/9469f09/releaseData/gbOpen/AFG/ADM2/geoBoundaries-AFG-ADM2_simplified.geojson"
+# If your hosting blocks GitHub downloads, the map will not load.
+# The code includes a clear error message + fallback behavior.
+ADM1_GEOJSON_URL = "https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/AFG/ADM1/geoBoundaries-AFG-ADM1.geojson"
+ADM2_GEOJSON_URL = "https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/AFG/ADM2/geoBoundaries-AFG-ADM2_simplified.geojson"
 
 # =========================
 # Helpers
 # =========================
-def norm(s):
-    return str(s).strip()
+def norm_text(x: str) -> str:
+    """Normalize names for matching (Province/District)."""
+    s = str(x).strip().lower()
+    s = s.replace("_", " ").replace("’", "'").replace("`", "'")
+    s = s.replace("  ", " ")
+    s = s.replace("sar e pul", "sar-e-pul")
+    s = s.replace("sare pul", "sar-e-pul")
+    s = s.replace("maidan wardak", "maidān wardak").replace("maydan wardak", "maidān wardak")
+    # Keep hyphens but normalize spaces around them
+    s = s.replace(" - ", "-").replace("- ", "-").replace(" -", "-")
+    return s
 
 def remove_total_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove rows containing 'total' in Region/Province/District (case-insensitive)."""
     df = df.copy()
     for c in ["Region", "Province", "District"]:
         if c in df.columns:
@@ -91,126 +125,158 @@ def remove_total_rows(df: pd.DataFrame) -> pd.DataFrame:
             df = df[~df[c].str.contains(r"\btotal\b", case=False, na=False)]
     return df
 
-def to_numeric(df: pd.DataFrame, cols):
-    df = df.copy()
-    for c in cols:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
-    return df
+def safe_num(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").fillna(0)
 
-def pick_prefixed_col(columns, prefix, keywords):
+def find_prefixed_metric(df_cols, prefix, keywords):
     """
-    columns: list[str]
-    prefix: 'CBE-' or 'PBs-' or 'Total-'
-    keywords: list[str] (e.g. ['target','sample'])
+    Find a column that starts with prefix and contains any of the keywords.
+    Example: prefix='CBE-' keywords=['target','sample'].
     """
-    cols = [norm(c) for c in columns]
-    # exact prefix match first
+    cols = [str(c).strip() for c in df_cols]
     candidates = [c for c in cols if c.startswith(prefix)]
-    # keyword match
     for kw in keywords:
         for c in candidates:
             if kw.lower() in c.lower():
                 return c
-    # fallback: if only one candidate and one keyword group
+    # fallback: if only one candidate exists
     if len(candidates) == 1:
         return candidates[0]
     return None
 
+def detect_comment_columns(df: pd.DataFrame) -> list:
+    """Detect comment columns automatically."""
+    cols = []
+    for c in df.columns:
+        cl = str(c).strip().lower()
+        if "comment" in cl or cl.endswith("-comments") or cl.endswith("_comments"):
+            cols.append(c)
+    return cols
+
+def summarize_comments(df_raw: pd.DataFrame) -> dict:
+    """
+    Summarize comments: total non-empty comment cells and top frequent short texts (if any).
+    """
+    comment_cols = detect_comment_columns(df_raw)
+    if not comment_cols:
+        return {"comment_cols": [], "non_empty": 0, "top": []}
+
+    tmp = df_raw[comment_cols].copy()
+    # Convert everything to string, treat blanks as empty
+    tmp = tmp.applymap(lambda x: "" if pd.isna(x) else str(x).strip())
+    non_empty = int((tmp != "").sum().sum())
+
+    # Collect short comments for frequency
+    all_comments = []
+    for c in comment_cols:
+        vals = tmp[c].tolist()
+        all_comments.extend([v for v in vals if v])
+
+    # Basic frequency (limit)
+    from collections import Counter
+    top = Counter(all_comments).most_common(10)
+
+    return {"comment_cols": comment_cols, "non_empty": non_empty, "top": top}
+
 def build_tool_view(df_raw: pd.DataFrame, tool: str) -> pd.DataFrame:
     """
-    tool: 'CBE' or 'PBs' or 'Total'
-    Logic:
-      - Column A,B,C are Region/Province/District (use them directly)
-      - Metrics are decided by labels:
-          CBE-* belongs to CBE
-          PBs-* belongs to PBs
-          Total-* is general (for Total tool)
-    Returns a unified df with standard columns:
+    A/B/C = Region/Province/District (by position).
+    Columns with prefixes:
+      CBE-... -> CBE metrics
+      PBs-... -> PBs metrics
+      Total-... -> Total metrics
+    Tool choices:
+      - CBE: uses CBE- columns
+      - PBs: uses PBs- columns
+      - Total: uses Total- columns; if Total- missing, sums CBE+PBs where possible.
+    Returns standardized columns:
       Region, Province, District,
-      Total_Sample_Size, Total_Received, Approved, Pending, Rejected, Total_Checked, Progress_Percentage
+      Total_Sample_Size, Total_Received, Approved, Pending, Rejected, Total_Checked, Progress_Percentage, Progress_Status
     """
     df = df_raw.copy()
+    if df.shape[1] < 3:
+        raise ValueError("The sheet must have at least 3 columns (A=Region, B=Province, C=District).")
 
-    # Ensure A/B/C as Region/Province/District by POSITION (as you requested)
-    # If sheet already has those names, this keeps them; otherwise force by first 3 columns.
     cols = list(df.columns)
-    if len(cols) >= 3:
-        df = df.rename(columns={cols[0]: "Region", cols[1]: "Province", cols[2]: "District"})
-    else:
-        raise ValueError("Sheet must have at least 3 columns: Region, Province, District (A, B, C).")
+    df = df.rename(columns={cols[0]: "Region", cols[1]: "Province", cols[2]: "District"})
 
-    for c in ["Region", "Province", "District"]:
-        df[c] = df[c].astype(str).str.strip()
+    df["Region"] = df["Region"].astype(str).str.strip()
+    df["Province"] = df["Province"].astype(str).str.strip()
+    df["District"] = df["District"].astype(str).str.strip()
 
-    # Remove Total rows (Province Total / District Total etc.)
     df = remove_total_rows(df)
 
-    # tool prefix
-    prefix = {"CBE": "CBE-", "PBs": "PBs-", "Total": "Total-"}[tool]
+    prefix_map = {"CBE": "CBE-", "PBs": "PBs-", "Total": "Total-"}
+    prefix = prefix_map[tool]
 
-    # Resolve metric columns based on labels in sheet
-    all_cols = list(df.columns)
+    # Resolve metric columns from sheet headers
+    col_target = find_prefixed_metric(df.columns, prefix, ["target", "sample", "samplesize", "sample_size", "total_sample"])
+    col_received = find_prefixed_metric(df.columns, prefix, ["received", "collected", "collection", "data_received"])
+    col_approved = find_prefixed_metric(df.columns, prefix, ["approved", "approve"])
+    col_pending = find_prefixed_metric(df.columns, prefix, ["pending", "review", "in_review", "under_review"])
+    col_rejected = find_prefixed_metric(df.columns, prefix, ["rejected", "reject"])
+    col_checked = find_prefixed_metric(df.columns, prefix, ["checked", "reviewed", "total_checked"])
 
-    col_target   = pick_prefixed_col(all_cols, prefix, ["target", "sample", "samplesize", "sample_size", "total_sample"])
-    col_received = pick_prefixed_col(all_cols, prefix, ["received", "data_received", "collection", "collected"])
-    col_approved = pick_prefixed_col(all_cols, prefix, ["approved", "approve"])
-    col_pending  = pick_prefixed_col(all_cols, prefix, ["pending", "review", "in_review", "under_review"])
-    col_rejected = pick_prefixed_col(all_cols, prefix, ["rejected", "reject"])
-    col_checked  = pick_prefixed_col(all_cols, prefix, ["checked", "reviewed", "total_checked"])
-
-    # Build unified numeric columns (missing ones become 0)
-    def get_series(colname):
+    def get_col(colname):
         if colname and colname in df.columns:
-            return pd.to_numeric(df[colname], errors="coerce").fillna(0)
-        return pd.Series([0]*len(df), index=df.index, dtype=float)
+            return safe_num(df[colname])
+        return pd.Series([0] * len(df), index=df.index, dtype=float)
 
-    df_u = df[["Region","Province","District"]].copy()
-    df_u["Total_Sample_Size"] = get_series(col_target)
-    df_u["Total_Received"]    = get_series(col_received)
-    df_u["Approved"]          = get_series(col_approved)
-    df_u["Pending"]           = get_series(col_pending)
-    df_u["Rejected"]          = get_series(col_rejected)
+    out = df[["Region", "Province", "District"]].copy()
+    out["Total_Sample_Size"] = get_col(col_target)
+    out["Total_Received"] = get_col(col_received)
+    out["Approved"] = get_col(col_approved)
+    out["Pending"] = get_col(col_pending)
+    out["Rejected"] = get_col(col_rejected)
 
-    # Total_Checked priority: explicit column if exists, else Approved+Pending+Rejected
-    checked_explicit = get_series(col_checked)
-    df_u["Total_Checked"] = np.where(checked_explicit > 0, checked_explicit, df_u["Approved"] + df_u["Pending"] + df_u["Rejected"])
+    checked_explicit = get_col(col_checked)
+    out["Total_Checked"] = np.where(
+        checked_explicit > 0,
+        checked_explicit,
+        out["Approved"] + out["Pending"] + out["Rejected"]
+    )
 
-    # If Total tool but Total-* columns are not provided, fallback = CBE + PBs
-    if tool == "Total" and df_u["Total_Sample_Size"].sum() == 0:
-        # sum from CBE and PBs if available
-        cbe_df = build_tool_view(df_raw, "CBE")
-        pbs_df = build_tool_view(df_raw, "PBs")
-        key = ["Region","Province","District"]
-        merged = cbe_df.merge(pbs_df, on=key, how="outer", suffixes=("_CBE","_PBs")).fillna(0)
-        out = merged[key].copy()
-        out["Total_Sample_Size"] = merged["Total_Sample_Size_CBE"] + merged["Total_Sample_Size_PBs"]
-        out["Total_Received"]    = merged["Total_Received_CBE"] + merged["Total_Received_PBs"]
-        out["Approved"]          = merged["Approved_CBE"] + merged["Approved_PBs"]
-        out["Pending"]           = merged["Pending_CBE"] + merged["Pending_PBs"]
-        out["Rejected"]          = merged["Rejected_CBE"] + merged["Rejected_PBs"]
-        out["Total_Checked"]     = merged["Total_Checked_CBE"] + merged["Total_Checked_PBs"]
-        df_u = out
+    # If Total tool has no Total- target, attempt sum of CBE + PBs
+    if tool == "Total" and out["Total_Sample_Size"].sum() == 0:
+        cbe = build_tool_view(df_raw, "CBE")
+        pbs = build_tool_view(df_raw, "PBs")
+        key = ["Region", "Province", "District"]
+        m = cbe.merge(pbs, on=key, how="outer", suffixes=("_CBE", "_PBs")).fillna(0)
+        out = m[key].copy()
+        out["Total_Sample_Size"] = m["Total_Sample_Size_CBE"] + m["Total_Sample_Size_PBs"]
+        out["Total_Received"] = m["Total_Received_CBE"] + m["Total_Received_PBs"]
+        out["Approved"] = m["Approved_CBE"] + m["Approved_PBs"]
+        out["Pending"] = m["Pending_CBE"] + m["Pending_PBs"]
+        out["Rejected"] = m["Rejected_CBE"] + m["Rejected_PBs"]
+        out["Total_Checked"] = m["Total_Checked_CBE"] + m["Total_Checked_PBs"]
 
-    # Progress %
-    df_u["Progress_Percentage"] = np.where(
-        df_u["Total_Sample_Size"] > 0,
-        (df_u["Total_Checked"] / df_u["Total_Sample_Size"] * 100),
+    out["Progress_Percentage"] = np.where(
+        out["Total_Sample_Size"] > 0,
+        (out["Total_Checked"] / out["Total_Sample_Size"]) * 100.0,
         0
     ).clip(0, 100).round(1)
 
-    df_u["Progress_Status"] = df_u["Progress_Percentage"].apply(
+    out["Progress_Status"] = out["Progress_Percentage"].apply(
         lambda x: "On Track" if x >= 70 else "Behind Schedule" if x >= 40 else "Critical"
     )
 
-    # Make numeric safe
-    df_u = to_numeric(df_u, ["Total_Sample_Size","Total_Received","Approved","Pending","Rejected","Total_Checked","Progress_Percentage"])
-    return df_u
+    # Add normalized keys for map matching
+    out["_prov_norm"] = out["Province"].map(norm_text)
+    out["_dist_norm"] = out["District"].map(norm_text)
+
+    return out
 
 @st.cache_data(ttl=600)
 def load_google_sheet():
+    """
+    Reads your Google Sheet using a service account.
+    HINT:
+      - Put the service account JSON into Streamlit Secrets under 'gcp_service_account'
+      - Share the Google Sheet with the service account email (Viewer is enough)
+    """
     import gspread
     from google.oauth2.service_account import Credentials
+
     scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     client = gspread.authorize(creds)
@@ -219,7 +285,7 @@ def load_google_sheet():
     ws = sh.worksheet(WORKSHEET_NAME)
     data = ws.get_all_records()
     df = pd.DataFrame(data)
-    df.columns = [norm(c) for c in df.columns]
+    df.columns = [str(c).strip() for c in df.columns]
     return df
 
 @st.cache_data(ttl=86400)
@@ -228,64 +294,223 @@ def load_geojson(url: str):
     r.raise_for_status()
     return r.json()
 
+def prepare_geojson_for_matching(geojson: dict, name_prop: str = "shapeName", new_prop: str = "name_norm") -> dict:
+    """
+    Add a normalized name property to each feature: properties[name_norm] = norm_text(properties[shapeName]).
+    """
+    gj = geojson
+    for f in gj.get("features", []):
+        props = f.get("properties", {})
+        raw_name = props.get(name_prop, "")
+        props[new_prop] = norm_text(raw_name)
+        f["properties"] = props
+    return gj
+
+def make_pdf_report(
+    tool_choice: str,
+    filters: dict,
+    kpis: dict,
+    regional_summary: pd.DataFrame,
+    province_summary: pd.DataFrame,
+    comment_summary: dict
+) -> bytes:
+    """
+    Generates a standard, official-looking PDF report.
+    Includes 'comments' summary similar to your sample report style.  (See your provided PDF structure.) 
+    """
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=1.6*cm,
+        rightMargin=1.6*cm,
+        topMargin=1.6*cm,
+        bottomMargin=1.6*cm
+    )
+    styles = getSampleStyleSheet()
+    story = []
+
+    title = f"Export Report — Sample Track Dashboard ({tool_choice})"
+    story.append(Paragraph(title, styles["Title"]))
+    story.append(Spacer(1, 10))
+
+    exported_on = datetime.now().strftime("%A, %B %d, %Y, %I:%M %p")
+    story.append(Paragraph(f"<b>Exported on:</b> {exported_on}", styles["Normal"]))
+    story.append(Paragraph(f"<b>Data source:</b> Google Sheets (Spreadsheet Key: {SPREADSHEET_KEY}, Sheet: {WORKSHEET_NAME})", styles["Normal"]))
+    story.append(Spacer(1, 10))
+
+    # Filters
+    story.append(Paragraph("<b>Filters applied</b>", styles["Heading3"]))
+    filt_tbl = [
+        ["Region", filters.get("region", "All")],
+        ["Province", filters.get("province", "All")],
+        ["District", filters.get("district", "All")],
+        ["Progress Status", ", ".join(filters.get("status", ["All"])) if isinstance(filters.get("status"), list) else str(filters.get("status"))],
+    ]
+    t = Table(filt_tbl, colWidths=[5*cm, 10*cm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.grey),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 12))
+
+    # KPIs
+    story.append(Paragraph("<b>Key metrics</b>", styles["Heading3"]))
+    kpi_tbl = [
+        ["Total Target", f"{kpis['total_sample']:,.0f}"],
+        ["Total Received", f"{kpis['total_received']:,.0f}"],
+        ["Total Checked", f"{kpis['total_checked']:,.0f}"],
+        ["Approved", f"{kpis['total_approved']:,.0f}"],
+        ["Rejected", f"{kpis['total_rejected']:,.0f}"],
+        ["Pending", f"{kpis['total_pending']:,.0f}"],
+        ["Overall Progress (%)", f"{kpis['overall_progress']:.1f}%"],
+    ]
+    kt = Table(kpi_tbl, colWidths=[7*cm, 8*cm])
+    kt.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+    ]))
+    story.append(kt)
+    story.append(Spacer(1, 12))
+
+    # Comments summary
+    story.append(Paragraph("<b>Comments summary</b>", styles["Heading3"]))
+    if not comment_summary["comment_cols"]:
+        story.append(Paragraph("No comment columns were detected in the sheet.", styles["Normal"]))
+    else:
+        story.append(Paragraph(f"Detected comment columns: {', '.join([str(c) for c in comment_summary['comment_cols']])}", styles["Normal"]))
+        story.append(Paragraph(f"Total non-empty comment entries: <b>{comment_summary['non_empty']:,}</b>", styles["Normal"]))
+        if comment_summary["top"]:
+            story.append(Spacer(1, 6))
+            story.append(Paragraph("Most frequent comments (top 10):", styles["Normal"]))
+            top_tbl = [["Comment", "Count"]]
+            for txt, cnt in comment_summary["top"]:
+                # Keep short to prevent PDF overflow
+                short_txt = (txt[:120] + "…") if len(txt) > 120 else txt
+                top_tbl.append([short_txt, str(cnt)])
+            tt = Table(top_tbl, colWidths=[12*cm, 3*cm])
+            tt.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.grey),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]))
+            story.append(tt)
+
+    story.append(Spacer(1, 12))
+
+    # Regional summary
+    story.append(Paragraph("<b>Regional summary</b>", styles["Heading3"]))
+    if regional_summary.empty:
+        story.append(Paragraph("No regional data under selected filters.", styles["Normal"]))
+    else:
+        rs = regional_summary.copy()
+        rs = rs[["Region", "Total_Sample_Size", "Total_Checked", "Approved", "Rejected", "Pending", "Progress"]]
+        rs_tbl = [rs.columns.tolist()] + rs.values.tolist()
+        rtable = Table(rs_tbl, colWidths=[4*cm, 2.2*cm, 2.2*cm, 1.7*cm, 1.7*cm, 1.7*cm, 1.7*cm])
+        rtable.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.3, colors.grey),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+            ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+        ]))
+        story.append(rtable)
+
+    story.append(Spacer(1, 12))
+
+    # Province summary (top 20)
+    story.append(Paragraph("<b>Province summary (top 20 by progress)</b>", styles["Heading3"]))
+    if province_summary.empty:
+        story.append(Paragraph("No province data under selected filters.", styles["Normal"]))
+    else:
+        ps = province_summary.copy().sort_values("Progress", ascending=False).head(20)
+        ps = ps[["Province", "Total_Sample_Size", "Total_Checked", "Approved", "Rejected", "Pending", "Progress"]]
+        ps_tbl = [ps.columns.tolist()] + ps.values.tolist()
+        ptable = Table(ps_tbl, colWidths=[4.3*cm, 2.2*cm, 2.2*cm, 1.6*cm, 1.6*cm, 1.6*cm, 1.6*cm])
+        ptable.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.3, colors.grey),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+            ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+        ]))
+        story.append(ptable)
+
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("<i>Note:</i> This report is generated automatically from the selected tool prefix (CBE-/PBs-/Total-) and the sheet headers.", styles["Normal"]))
+
+    doc.build(story)
+    return buffer.getvalue()
+
 # =========================
 # Load data
 # =========================
+st.sidebar.markdown("## Data setup (Hints)")
+st.sidebar.caption("Hints:")
+st.sidebar.caption("• Put your service account JSON in Streamlit Secrets under: gcp_service_account")
+st.sidebar.caption("• Share the Google Sheet with the service account email")
+st.sidebar.caption("• Ensure the worksheet tab name is exactly: Test")
+
 try:
     df_sheet = load_google_sheet()
 except Exception as e:
-    st.error("❌ اتصال به Google Sheet مشکل دارد. این موارد را چک کن:")
+    st.error("Google Sheets connection failed.")
     st.markdown("""
-- در Streamlit Secrets کل JSON سرویس اکانت را زیر **gcp_service_account** گذاشته باشی
-- شیت را با ایمیل Service Account **Share** کرده باشی
-- نام ورکشیت دقیقاً **Test** باشد
+**Hints to fix:**
+- In Streamlit Cloud → App → Settings → Secrets: add `gcp_service_account` (full JSON)
+- Share your Google Sheet with the service account email (Viewer access is enough)
+- Confirm the sheet tab name is `Test`
 """)
     st.code(str(e))
     st.stop()
 
 # =========================
-# Sidebar Filters (NO DATE FILTER)
+# Sidebar (NO DATE FILTER)
 # =========================
-st.sidebar.markdown("## 🎯 Filters")
+st.sidebar.markdown("## Filters")
 
-# Tool selector (CBE vs PBs vs Total)
-st.sidebar.markdown("### 🧰 Tool")
-tool_choice = st.sidebar.selectbox("Select Tool", ["Total", "CBE", "PBs"])
+tool_choice = st.sidebar.selectbox(
+    "Select tool",
+    ["Total", "CBE", "PBs"],
+    help="Total uses Total- columns if present. If Total- columns are missing, it will try to sum CBE + PBs."
+)
 
-# Build view based on labels/prefix
+# Build dataset from prefixes
 try:
     df = build_tool_view(df_sheet, tool_choice)
 except Exception as e:
-    st.error("❌ ساختن دیتاست بر اساس لیبل‌های شیت مشکل دارد.")
+    st.error("Failed to build dataset from sheet headers.")
     st.code(str(e))
     st.stop()
 
-# Region/Province/District filters
-st.sidebar.markdown("### 🌍 Region")
-regions = ["All"] + sorted(df["Region"].dropna().unique().tolist())
-selected_region = st.sidebar.selectbox("Select Region", regions)
+selected_region = st.sidebar.selectbox(
+    "Select region",
+    ["All"] + sorted(df["Region"].dropna().unique().tolist())
+)
 
-st.sidebar.markdown("### 🏙️ Province")
 if selected_region != "All":
-    provs = ["All"] + sorted(df[df["Region"] == selected_region]["Province"].dropna().unique().tolist())
+    province_options = ["All"] + sorted(df[df["Region"] == selected_region]["Province"].dropna().unique().tolist())
 else:
-    provs = ["All"] + sorted(df["Province"].dropna().unique().tolist())
-selected_province = st.sidebar.selectbox("Select Province", provs)
+    province_options = ["All"] + sorted(df["Province"].dropna().unique().tolist())
 
-st.sidebar.markdown("### 🏘️ District")
+selected_province = st.sidebar.selectbox("Select province", province_options)
+
 if selected_province != "All":
-    dists = ["All"] + sorted(df[df["Province"] == selected_province]["District"].dropna().unique().tolist())
+    district_options = ["All"] + sorted(df[df["Province"] == selected_province]["District"].dropna().unique().tolist())
 elif selected_region != "All":
-    dists = ["All"] + sorted(df[df["Region"] == selected_region]["District"].dropna().unique().tolist())
+    district_options = ["All"] + sorted(df[df["Region"] == selected_region]["District"].dropna().unique().tolist())
 else:
-    dists = ["All"] + sorted(df["District"].dropna().unique().tolist())
-selected_district = st.sidebar.selectbox("Select District", dists)
+    district_options = ["All"] + sorted(df["District"].dropna().unique().tolist())
 
-st.sidebar.markdown("### 📈 Progress Status")
+selected_district = st.sidebar.selectbox("Select district", district_options)
+
 progress_status = st.sidebar.multiselect(
-    "Select Progress Status",
+    "Select progress status",
     options=["All", "On Track", "Behind Schedule", "Critical"],
-    default=["All"]
+    default=["All"],
+    help="Use this to filter by computed progress status."
 )
 
 # Apply filters
@@ -302,76 +527,78 @@ if "All" not in progress_status:
 # =========================
 # KPIs
 # =========================
-st.markdown('<div class="section-header">📈 Key Performance Indicators</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">Key Performance Indicators</div>', unsafe_allow_html=True)
 
-total_sample   = float(filtered_df["Total_Sample_Size"].sum())
+total_sample = float(filtered_df["Total_Sample_Size"].sum())
 total_received = float(filtered_df["Total_Received"].sum())
 total_approved = float(filtered_df["Approved"].sum())
-total_pending  = float(filtered_df["Pending"].sum())
+total_pending = float(filtered_df["Pending"].sum())
 total_rejected = float(filtered_df["Rejected"].sum())
-total_checked  = float(filtered_df["Total_Checked"].sum())
+total_checked = float(filtered_df["Total_Checked"].sum())
 
-overall_progress = (total_checked / total_sample * 100) if total_sample > 0 else 0
-approval_rate_of_target = (total_approved / total_sample * 100) if total_sample > 0 else 0
-rejection_rate_of_checked = (total_rejected / total_checked * 100) if total_checked > 0 else 0
+overall_progress = (total_checked / total_sample * 100.0) if total_sample > 0 else 0.0
+rejection_rate = (total_rejected / total_checked * 100.0) if total_checked > 0 else 0.0
 
-c1, c2, c3, c4 = st.columns(4)
+k1, k2, k3, k4 = st.columns(4)
 
-with c1:
+with k1:
     st.markdown(f"""
     <div class="metric-card">
-        <div class="kpi-label">{tool_choice} - TOTAL TARGET</div>
+        <div class="kpi-label">{tool_choice} — Total Target</div>
         <div class="kpi-value">{total_sample:,.0f}</div>
-        <div class="kpi-change neutral">🏙️ {filtered_df["Province"].nunique():,} Provinces | 🏘️ {filtered_df["District"].nunique():,} Districts</div>
+        <div class="kpi-change">Provinces: {filtered_df["Province"].nunique():,} | Districts: {filtered_df["District"].nunique():,}</div>
     </div>
     """, unsafe_allow_html=True)
 
-with c2:
+with k2:
     st.markdown(f"""
     <div class="metric-card">
-        <div class="kpi-label">OVERALL PROGRESS</div>
+        <div class="kpi-label">Overall Progress</div>
         <div class="kpi-value">{overall_progress:.1f}%</div>
-        <div class="kpi-change positive">✅ {total_checked:,.0f} Checked | ⏳ {max(total_sample-total_checked,0):,.0f} Remaining</div>
+        <div class="kpi-change">Checked: {total_checked:,.0f} | Remaining: {max(total_sample-total_checked, 0):,.0f}</div>
     </div>
     """, unsafe_allow_html=True)
 
-with c3:
+with k3:
     st.markdown(f"""
     <div class="metric-card">
-        <div class="kpi-label">APPROVAL RATE (OF TARGET)</div>
-        <div class="kpi-value">{approval_rate_of_target:.1f}%</div>
-        <div class="kpi-change">
-            <span class="positive">✓ {total_approved:,.0f} Approved</span> |
-            <span class="negative">✗ {total_rejected:,.0f} Rejected</span>
-        </div>
+        <div class="kpi-label">Approvals</div>
+        <div class="kpi-value">{total_approved:,.0f}</div>
+        <div class="kpi-change">Rejected: {total_rejected:,.0f}</div>
     </div>
     """, unsafe_allow_html=True)
 
-with c4:
+with k4:
     st.markdown(f"""
     <div class="metric-card">
-        <div class="kpi-label">PENDING + REJECTION RATE</div>
+        <div class="kpi-label">Pending + Rejection Rate</div>
         <div class="kpi-value">{total_pending:,.0f}</div>
-        <div class="kpi-change neutral">⚠️ {rejection_rate_of_checked:.1f}% Rejection Rate (of Checked)</div>
+        <div class="kpi-change">Rejection rate (of checked): {rejection_rate:.1f}%</div>
     </div>
     """, unsafe_allow_html=True)
 
 # =========================
-# Maps (Afghanistan + Province Districts)
+# Maps
 # =========================
-st.markdown('<div class="section-header">🗺️ Maps</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">Maps</div>', unsafe_allow_html=True)
+st.markdown('<div class="hint">If the map does not render, it usually means the app cannot download GeoJSON (internet restrictions). See the hint panel below.</div>', unsafe_allow_html=True)
 
-# Load geojson
+# Load geojson and prepare normalized properties
+adm1 = None
+adm2 = None
+geojson_error = None
 try:
     adm1 = load_geojson(ADM1_GEOJSON_URL)
     adm2 = load_geojson(ADM2_GEOJSON_URL)
+    adm1 = prepare_geojson_for_matching(adm1, name_prop="shapeName", new_prop="name_norm")
+    adm2 = prepare_geojson_for_matching(adm2, name_prop="shapeName", new_prop="name_norm")
 except Exception as e:
-    st.warning("⚠️ نتوانستم GeoJSON نقشه را دانلود کنم. (اگر اینترنت/گیت‌هاب بلاک باشد)")
-    st.code(str(e))
-    adm1, adm2 = None, None
+    geojson_error = str(e)
 
-# Province summary for map (ADM1)
-prov_summary = filtered_df.groupby("Province", as_index=False).agg({
+map_left, map_right = st.columns(2)
+
+# Province summary for national map
+prov_summary = filtered_df.groupby(["Province", "_prov_norm"], as_index=False).agg({
     "Total_Sample_Size":"sum",
     "Total_Checked":"sum",
     "Total_Received":"sum",
@@ -381,12 +608,12 @@ prov_summary = filtered_df.groupby("Province", as_index=False).agg({
 })
 prov_summary["Progress_Percentage"] = np.where(
     prov_summary["Total_Sample_Size"] > 0,
-    (prov_summary["Total_Checked"] / prov_summary["Total_Sample_Size"] * 100),
+    (prov_summary["Total_Checked"] / prov_summary["Total_Sample_Size"] * 100.0),
     0
 ).round(1)
 
-# District summary for second map (ADM2)
-dist_summary = filtered_df.groupby(["Province","District"], as_index=False).agg({
+# District summary for provincial map
+dist_summary = filtered_df.groupby(["Province", "District", "_dist_norm"], as_index=False).agg({
     "Total_Sample_Size":"sum",
     "Total_Checked":"sum",
     "Total_Received":"sum",
@@ -396,27 +623,30 @@ dist_summary = filtered_df.groupby(["Province","District"], as_index=False).agg(
 })
 dist_summary["Progress_Percentage"] = np.where(
     dist_summary["Total_Sample_Size"] > 0,
-    (dist_summary["Total_Checked"] / dist_summary["Total_Sample_Size"] * 100),
+    (dist_summary["Total_Checked"] / dist_summary["Total_Sample_Size"] * 100.0),
     0
 ).round(1)
 
-map_col1, map_col2 = st.columns(2)
-
-with map_col1:
-    st.markdown("##### 🇦🇫 Afghanistan Map (Province Highlight)")
+with map_left:
+    st.markdown("##### Afghanistan (Provinces)")
     if adm1 is None:
-        st.info("GeoJSON در دسترس نیست.")
+        st.warning("Map data could not be loaded.")
+        if geojson_error:
+            st.code(geojson_error)
+        st.markdown("""
+**Hint:** If your Streamlit hosting blocks GitHub downloads, the GeoJSON cannot be fetched.
+Solution options:
+- Allow outbound internet access, or
+- Host the GeoJSON on an accessible URL, or
+- Upload the GeoJSON files with the app and load locally.
+""")
     else:
-        # geoBoundaries usually uses properties.shapeName
-        # We match sheet Province names to geojson shapeName (case-insensitive)
-        prov_summary["_prov_key"] = prov_summary["Province"].str.strip().str.lower()
-
         fig_afg = px.choropleth(
             prov_summary,
             geojson=adm1,
-            locations="_prov_key",
+            locations="_prov_norm",
+            featureidkey="properties.name_norm",
             color="Progress_Percentage",
-            featureidkey="properties.shapeName",   # geoBoundaries
             hover_name="Province",
             hover_data={
                 "Progress_Percentage": True,
@@ -425,43 +655,32 @@ with map_col1:
                 "Approved": True,
                 "Rejected": True,
                 "Pending": True,
-                "_prov_key": False
+                "_prov_norm": False
             },
-            title=f"{tool_choice} - Progress by Province"
+            title=f"{tool_choice} — Progress by Province"
         )
         fig_afg.update_geos(fitbounds="locations", visible=False)
-
-        # If province filter selected, zoom to that province only (visual focus)
-        if selected_province != "All":
-            prov_focus = prov_summary[prov_summary["_prov_key"] == selected_province.strip().lower()]
-            if not prov_focus.empty:
-                fig_afg.update_layout(title=f"{tool_choice} - Selected Province: {selected_province}")
-
         fig_afg.update_layout(height=520, margin=dict(l=0, r=0, t=40, b=0))
         st.plotly_chart(fig_afg, use_container_width=True)
 
-with map_col2:
-    st.markdown("##### 🧭 District Map (within selected Province)")
+with map_right:
+    st.markdown("##### Selected Province (Districts)")
     if adm2 is None:
-        st.info("GeoJSON در دسترس نیست.")
+        st.info("Select a province to display district-level map (GeoJSON required).")
     else:
-        # For district map you MUST select a province (otherwise too many districts)
         if selected_province == "All":
-            st.info("برای نقشه ولسوالی‌ها، لطفاً یک ولایت را از فلتر انتخاب کن.")
+            st.info("Please select a province in the sidebar to view the district map.")
         else:
             ds = dist_summary[dist_summary["Province"] == selected_province].copy()
             if ds.empty:
-                st.info("برای این ولایت دیتای ولسوالی موجود نیست.")
+                st.info("No district-level records for the selected province.")
             else:
-                ds["_dist_key"] = ds["District"].str.strip().str.lower()
-
-                # geoBoundaries ADM2 districts: properties.shapeName is district name
                 fig_dist = px.choropleth(
                     ds,
                     geojson=adm2,
-                    locations="_dist_key",
+                    locations="_dist_norm",
+                    featureidkey="properties.name_norm",
                     color="Progress_Percentage",
-                    featureidkey="properties.shapeName",
                     hover_name="District",
                     hover_data={
                         "Progress_Percentage": True,
@@ -471,27 +690,26 @@ with map_col2:
                         "Approved": True,
                         "Rejected": True,
                         "Pending": True,
-                        "_dist_key": False
+                        "_dist_norm": False
                     },
-                    title=f"{tool_choice} - District Progress in {selected_province}"
+                    title=f"{tool_choice} — District Progress in {selected_province}"
                 )
                 fig_dist.update_geos(fitbounds="locations", visible=False)
                 fig_dist.update_layout(height=520, margin=dict(l=0, r=0, t=40, b=0))
                 st.plotly_chart(fig_dist, use_container_width=True)
 
 # =========================
-# Charts / Overview
+# Overview Charts
 # =========================
-st.markdown('<div class="section-header">📊 Data Overview</div>', unsafe_allow_html=True)
-
-tab1, tab2, tab3, tab4 = st.tabs(["Progress Gauge", "Status Analysis", "Regional Performance", "Target vs Checked"])
+st.markdown('<div class="section-header">Data Overview</div>', unsafe_allow_html=True)
+tab1, tab2, tab3 = st.tabs(["Progress Gauge", "Status Breakdown", "Target vs Checked"])
 
 with tab1:
-    fig1 = go.Figure()
-    fig1.add_trace(go.Indicator(
+    fig_g = go.Figure()
+    fig_g.add_trace(go.Indicator(
         mode="gauge+number",
         value=float(overall_progress),
-        title={'text': f"{tool_choice} - Overall Progress"},
+        title={'text': f"{tool_choice} — Overall Progress"},
         gauge={
             'axis': {'range': [None, 100]},
             'steps': [
@@ -502,219 +720,167 @@ with tab1:
             'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 70}
         }
     ))
-    fig1.update_layout(height=300, margin=dict(l=40, r=40, t=60, b=20))
-    st.plotly_chart(fig1, use_container_width=True)
+    fig_g.update_layout(height=320, margin=dict(l=40, r=40, t=60, b=20))
+    st.plotly_chart(fig_g, use_container_width=True)
 
 with tab2:
-    cc1, cc2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
-    with cc1:
-        status_data = filtered_df.groupby("Progress_Status").size().reset_index(name="Count")
-        if status_data.empty:
-            st.info("No data for selected filters.")
+    with c1:
+        status_counts = filtered_df.groupby("Progress_Status").size().reset_index(name="Count")
+        if status_counts.empty:
+            st.info("No records for selected filters.")
         else:
-            fig2 = px.pie(status_data, values="Count", names="Progress_Status", hole=0.4,
-                         title="Progress Status Distribution")
-            st.plotly_chart(fig2, use_container_width=True)
+            fig_pie = px.pie(status_counts, values="Count", names="Progress_Status", hole=0.45, title="Progress Status Distribution")
+            st.plotly_chart(fig_pie, use_container_width=True)
 
-    with cc2:
-        review_data = pd.DataFrame({
+    with c2:
+        breakdown = pd.DataFrame({
             "Status": ["Approved", "Pending", "Rejected", "Remaining (Target-Checked)"],
-            "Count": [
-                total_approved,
-                total_pending,
-                total_rejected,
-                max(total_sample - total_checked, 0)
-            ]
+            "Count": [total_approved, total_pending, total_rejected, max(total_sample-total_checked, 0)]
         })
-        fig3 = px.bar(review_data, x="Status", y="Count", title="Review/Remaining Breakdown")
-        fig3.update_layout(xaxis_title="", yaxis_title="Count")
-        st.plotly_chart(fig3, use_container_width=True)
+        fig_bar = px.bar(breakdown, x="Status", y="Count", title="Review + Remaining Breakdown")
+        fig_bar.update_layout(xaxis_title="", yaxis_title="Count")
+        st.plotly_chart(fig_bar, use_container_width=True)
 
 with tab3:
-    regional_data = filtered_df.groupby("Region", as_index=False).agg({
-        "Total_Sample_Size":"sum",
-        "Total_Checked":"sum",
-        "Approved":"sum",
-        "Rejected":"sum",
-        "Pending":"sum"
-    })
-    if regional_data.empty:
-        st.info("No data for selected filters.")
-    else:
-        regional_data["Progress"] = np.where(
-            regional_data["Total_Sample_Size"] > 0,
-            (regional_data["Total_Checked"] / regional_data["Total_Sample_Size"] * 100),
-            0
-        ).round(1)
-
-        fig4 = px.bar(
-            regional_data.sort_values("Progress", ascending=False),
-            x="Region", y="Progress",
-            title=f"{tool_choice} - Progress by Region",
-            labels={"Progress":"Progress %"}
-        )
-        st.plotly_chart(fig4, use_container_width=True)
-        st.dataframe(regional_data.sort_values("Progress", ascending=False), use_container_width=True, height=260)
-
-with tab4:
     if filtered_df.empty:
-        st.info("No data for selected filters.")
+        st.info("No records for selected filters.")
     else:
-        fig5 = px.scatter(
+        fig_sc = px.scatter(
             filtered_df,
             x="Total_Sample_Size",
             y="Total_Checked",
             color="Progress_Percentage",
             hover_name="District",
-            hover_data=["Province","Region","Approved","Rejected","Pending","Total_Received"],
-            title=f"{tool_choice} - Target vs Checked",
-            labels={"Total_Sample_Size":"Target", "Total_Checked":"Checked"}
+            hover_data=["Province", "Region", "Approved", "Rejected", "Pending", "Total_Received"],
+            title=f"{tool_choice} — Target vs Checked (District level)"
         )
-        st.plotly_chart(fig5, use_container_width=True)
+        st.plotly_chart(fig_sc, use_container_width=True)
 
 # =========================
 # Detailed Tables
 # =========================
-st.markdown('<div class="section-header">📋 Detailed Data Analysis</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">Detailed Analysis</div>', unsafe_allow_html=True)
+l, r = st.columns(2)
 
-left, right = st.columns(2)
-
-with left:
-    st.markdown("##### 🏙️ Provincial Summary")
-    prov_tbl = filtered_df.groupby(["Region","Province"], as_index=False).agg({
-        "District":"nunique",
+with l:
+    st.markdown("##### Province Summary")
+    province_summary = filtered_df.groupby("Province", as_index=False).agg({
         "Total_Sample_Size":"sum",
         "Total_Received":"sum",
-        "Approved":"sum",
-        "Pending":"sum",
-        "Rejected":"sum",
         "Total_Checked":"sum",
-        "Progress_Percentage":"mean"
-    }).round(2)
-    prov_tbl = prov_tbl.rename(columns={"District":"Districts", "Progress_Percentage":"Avg_Progress"})
-    st.dataframe(prov_tbl.sort_values("Avg_Progress", ascending=False), use_container_width=True, height=420)
-
-with right:
-    st.markdown("##### 🏘️ District Summary")
-    metric_option = st.selectbox(
-        "Sort by",
-        ["Progress_Percentage","Total_Sample_Size","Total_Checked","Total_Received","Approved","Rejected","Pending"]
-    )
-    dist_tbl = filtered_df.groupby(["Province","District"], as_index=False).agg({
-        "Total_Sample_Size":"sum",
-        "Total_Received":"sum",
         "Approved":"sum",
-        "Pending":"sum",
         "Rejected":"sum",
-        "Total_Checked":"sum",
-        "Progress_Percentage":"mean"
-    }).round(2)
-    st.dataframe(dist_tbl.sort_values(metric_option, ascending=False).head(40), use_container_width=True, height=420)
+        "Pending":"sum"
+    })
+    province_summary["Progress"] = np.where(
+        province_summary["Total_Sample_Size"] > 0,
+        (province_summary["Total_Checked"] / province_summary["Total_Sample_Size"] * 100.0),
+        0
+    ).round(1)
 
-# =========================
-# Alerts
-# =========================
-st.markdown('<div class="section-header">⚠️ Alerts & Critical Issues</div>', unsafe_allow_html=True)
-
-tmp = filtered_df.copy()
-tmp["Rejected_Rate_Checked"] = np.where(tmp["Total_Checked"] > 0, tmp["Rejected"] / tmp["Total_Checked"], 0)
-tmp["Received_Rate"] = np.where(tmp["Total_Sample_Size"] > 0, tmp["Total_Received"] / tmp["Total_Sample_Size"], 0)
-
-critical_issues = tmp[
-    (tmp["Progress_Percentage"] < 40) |
-    (tmp["Rejected_Rate_Checked"] > 0.2) |
-    (tmp["Received_Rate"] < 0.5)
-].copy()
-
-if not critical_issues.empty:
-    critical_issues["Issue_Type"] = critical_issues.apply(
-        lambda row:
-            "Low Progress" if row["Progress_Percentage"] < 40
-            else "High Rejection" if row["Rejected_Rate_Checked"] > 0.2
-            else "Low Collection" if row["Received_Rate"] < 0.5
-            else "Other",
-        axis=1
-    )
     st.dataframe(
-        critical_issues[["Region","Province","District","Issue_Type","Progress_Percentage",
-                        "Total_Sample_Size","Total_Received","Total_Checked","Approved","Rejected","Pending"]]
-        .sort_values("Progress_Percentage"),
+        province_summary.sort_values("Progress", ascending=False),
         use_container_width=True,
-        height=320
+        height=420
     )
-else:
-    st.success("✅ No critical issues detected! All regions are performing well.")
 
-# =========================
-# Export
-# =========================
-st.markdown('<div class="section-header">📤 Export Reports</div>', unsafe_allow_html=True)
-
-e1, e2, e3 = st.columns(3)
-
-with e1:
-    if st.button("📋 Download Summary CSV", use_container_width=True):
-        summary = filtered_df.describe().round(2)
-        st.download_button(
-            "⬇️ Download",
-            data=summary.to_csv().encode("utf-8"),
-            file_name=f"{tool_choice}_summary.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-
-with e2:
-    if st.button("📊 Download Detailed CSV", use_container_width=True):
-        st.download_button(
-            "⬇️ Download",
-            data=filtered_df.to_csv(index=False).encode("utf-8"),
-            file_name=f"{tool_choice}_detailed.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-
-with e3:
-    st.info("Custom export columns:")
-    selected_cols = st.multiselect(
-        "Select columns",
-        ["Region","Province","District","Total_Sample_Size","Total_Received","Total_Checked","Approved","Pending","Rejected","Progress_Percentage","Progress_Status"],
-        default=["Region","Province","District","Total_Sample_Size","Total_Checked","Approved","Rejected","Progress_Percentage"]
+with r:
+    st.markdown("##### District Summary")
+    metric_sort = st.selectbox(
+        "Sort districts by",
+        ["Progress_Percentage", "Total_Sample_Size", "Total_Checked", "Total_Received", "Approved", "Rejected", "Pending"],
+        help="This sorts the district table under current filters."
     )
-    if selected_cols and st.button("🎯 Download Custom CSV", use_container_width=True):
-        out = filtered_df[selected_cols].copy()
+    district_summary = filtered_df.groupby(["Province", "District"], as_index=False).agg({
+        "Total_Sample_Size":"sum",
+        "Total_Received":"sum",
+        "Total_Checked":"sum",
+        "Approved":"sum",
+        "Rejected":"sum",
+        "Pending":"sum",
+        "Progress_Percentage":"mean"
+    }).round(2)
+
+    st.dataframe(
+        district_summary.sort_values(metric_sort, ascending=False).head(60),
+        use_container_width=True,
+        height=420
+    )
+
+# =========================
+# PDF Export (standard naming + include comments summary)
+# =========================
+st.markdown('<div class="section-header">Export</div>', unsafe_allow_html=True)
+
+comment_summary = summarize_comments(df_sheet)  # read comments from full sheet
+regional_summary = filtered_df.groupby("Region", as_index=False).agg({
+    "Total_Sample_Size":"sum",
+    "Total_Checked":"sum",
+    "Approved":"sum",
+    "Rejected":"sum",
+    "Pending":"sum"
+})
+regional_summary["Progress"] = np.where(
+    regional_summary["Total_Sample_Size"] > 0,
+    (regional_summary["Total_Checked"] / regional_summary["Total_Sample_Size"] * 100.0),
+    0
+).round(1)
+
+filters_for_pdf = {
+    "region": selected_region,
+    "province": selected_province,
+    "district": selected_district,
+    "status": progress_status
+}
+kpis_for_pdf = {
+    "total_sample": total_sample,
+    "total_received": total_received,
+    "total_checked": total_checked,
+    "total_approved": total_approved,
+    "total_rejected": total_rejected,
+    "total_pending": total_pending,
+    "overall_progress": overall_progress
+}
+
+pdf_col1, pdf_col2 = st.columns([1, 2])
+
+with pdf_col1:
+    if st.button("Generate PDF report", use_container_width=True, help="Creates an official PDF export report and includes a comments summary if comment columns exist."):
+        pdf_bytes = make_pdf_report(
+            tool_choice=tool_choice,
+            filters=filters_for_pdf,
+            kpis=kpis_for_pdf,
+            regional_summary=regional_summary,
+            province_summary=province_summary,
+            comment_summary=comment_summary
+        )
+        now_tag = datetime.now().strftime("%Y%m%d_%H%M")
+        file_name = f"SampleTrack_{tool_choice}_ExportReport_{now_tag}.pdf"
         st.download_button(
-            "⬇️ Download",
-            data=out.to_csv(index=False).encode("utf-8"),
-            file_name=f"{tool_choice}_custom.csv",
-            mime="text/csv",
+            label="Download PDF",
+            data=pdf_bytes,
+            file_name=file_name,
+            mime="application/pdf",
             use_container_width=True
         )
 
+with pdf_col2:
+    st.markdown("""
+<div class="hint">
+<b>PDF export notes</b><br/>
+• The PDF uses a standard formal structure (Exported on, Data source, Filters applied, Key metrics, Comments summary, Regional and Province summaries).<br/>
+• Comments are detected automatically from any columns containing "comment" or ending with "-Comments" / "_Comments".<br/>
+• If you want specific comment columns to be included, keep their header names consistent (e.g., Total-Comments, CBE-Comments, PBs-Comments).
+</div>
+""", unsafe_allow_html=True)
+
 # =========================
-# Footer + Sidebar info
+# Footer
 # =========================
 st.markdown("---")
-mid = st.columns(3)[1]
-with mid:
-    st.markdown(f"""
-    <div style="text-align: center; color: #6B7280; font-size: 0.9rem;">
-        <p>📅 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
-        <p>🧰 Tool: {tool_choice} | Records: {len(filtered_df):,} | Provinces: {filtered_df["Province"].nunique():,} | Districts: {filtered_df["District"].nunique():,}</p>
-        <p>🔍 Filter: Region={selected_region}, Province={selected_province}, District={selected_district}</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### ℹ️ Notes")
-st.sidebar.info("""
-- فلتر تاریخ حذف شد ✅
-- انتخاب Tool اضافه شد (CBE / PBs / Total) ✅
-- Region/Province/District از ستون‌های A/B/C شیت خوانده می‌شود ✅
-- محاسبات فقط بر اساس لیبل‌های شروع‌شونده با:
-  - CBE-  (برای CBE)
-  - PBs-  (برای مکاتب عامه)
-  - Total- (عمومی)
-- ردیف‌های Total حذف می‌شود ✅
-- نقشه افغانستان + نقشه ولسوالی‌های ولایت انتخاب‌شده اضافه شد ✅
-""")
+st.markdown(
+    f"<div class='hint' style='text-align:center;'>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} | Tool: {tool_choice} | Records: {len(filtered_df):,}</div>",
+    unsafe_allow_html=True
+)
