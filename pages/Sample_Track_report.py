@@ -13,7 +13,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
@@ -222,30 +222,60 @@ def load_google_sheet():
     return df
 
 # =========================
-# GeoJSON (Online, stable via geoBoundaries API)
+# GeoJSON via geoBoundaries API (ADM1 + ADM2)
 # =========================
 @st.cache_data(ttl=86400)
-def load_geojson_adm1_geoboundaries():
-    api_url = "https://www.geoboundaries.org/api/current/gbOpen/AFG/ADM1/"
-    r = requests.get(api_url, timeout=30)
-    r.raise_for_status()
-    meta = r.json()
+def fetch_geoboundaries_geojson(adm_level="ADM1", release="gbOpen", iso="AFG", simplified=True, timeout=60):
+    """
+    Reliable geoBoundaries downloader.
+    Returns GeoJSON (FeatureCollection).
+    """
+    api_url = f"https://www.geoboundaries.org/api/current/{release}/{iso}/{adm_level}/"
+    meta_resp = requests.get(api_url, timeout=timeout)
+    meta_resp.raise_for_status()
+    meta = meta_resp.json()
     if isinstance(meta, list) and len(meta) > 0:
         meta = meta[0]
-    geo_url = meta.get("simplifiedGeometryGeoJSON") or meta.get("gjDownloadURL")
+
+    # pick a download URL
+    geo_url = meta.get("simplifiedGeometryGeoJSON") if simplified else meta.get("gjDownloadURL")
+    if not geo_url:
+        geo_url = meta.get("gjDownloadURL")
     if not geo_url:
         return {"type": "FeatureCollection", "features": []}
-    g = requests.get(geo_url, timeout=60)
+
+    g = requests.get(geo_url, timeout=timeout)
     g.raise_for_status()
+
+    # ensure it's JSON (not HTML)
+    txt = g.text.strip()
+    if not (txt.startswith("{") or txt.startswith("[")):
+        raise ValueError("GeoJSON download did not return JSON (blocked or redirected).")
+
     return g.json()
 
-def prepare_geojson_for_matching(geojson: dict) -> dict:
+def prepare_geojson_for_matching(geojson: dict, name_candidates=("shapeName", "NAME_1", "NAME", "name")) -> dict:
     for f in geojson.get("features", []):
         props = f.get("properties", {})
-        raw_name = props.get("shapeName", props.get("NAME", props.get("name", "")))
+        raw_name = ""
+        for k in name_candidates:
+            if k in props and props.get(k):
+                raw_name = props.get(k)
+                break
         props["name_norm"] = norm_text(raw_name)
         f["properties"] = props
     return geojson
+
+# =========================
+# Helper: choose property key for Plotly featureidkey
+# =========================
+def detect_featureidkey(geojson: dict, expected_prop="name_norm"):
+    """
+    Ensures we know where properties are stored.
+    We always set properties.name_norm in prepare_geojson_for_matching,
+    so featureidkey should be 'properties.name_norm'.
+    """
+    return "properties.name_norm"
 
 # =========================
 # PDF Report (NO comments)
@@ -291,13 +321,11 @@ def make_pdf_report(tool_choice: str, filters: dict, kpis: dict,
     story = []
     now_txt = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    # Cover
     story.append(Paragraph("SAMPLE TRACK ANALYTICS REPORT", styles["TitleMain"]))
     story.append(Paragraph(f"Tool: {tool_choice}", styles["Small"]))
     story.append(Paragraph(f"Generated on: {now_txt}", styles["Small"]))
     story.append(Spacer(1, 0.6*cm))
 
-    # Filters
     story.append(Paragraph("Filters", styles["H2"]))
     f_rows = [
         ["Region", filters.get("region", "All")],
@@ -317,7 +345,6 @@ def make_pdf_report(tool_choice: str, filters: dict, kpis: dict,
     story.append(ft)
     story.append(Spacer(1, 0.6*cm))
 
-    # KPI Table
     story.append(Paragraph("Executive Summary", styles["H2"]))
     es = [
         ["Metric", "Value"],
@@ -342,7 +369,6 @@ def make_pdf_report(tool_choice: str, filters: dict, kpis: dict,
     ]))
     story.append(est)
 
-    # Regional table
     story.append(Spacer(1, 0.4*cm))
     story.append(Paragraph("Regional Performance", styles["H2"]))
     if regional_summary is None or regional_summary.empty:
@@ -362,7 +388,6 @@ def make_pdf_report(tool_choice: str, filters: dict, kpis: dict,
         ]))
         story.append(rst)
 
-    # Province top table
     story.append(Spacer(1, 0.4*cm))
     story.append(Paragraph("Top Provinces by Progress", styles["H2"]))
     if province_summary is None or province_summary.empty:
@@ -505,15 +530,24 @@ with c4:
     """, unsafe_allow_html=True)
 
 # =========================
-# Maps (Afghanistan ADM1)
+# Maps (ADM1 + ADM2)
 # =========================
 st.markdown('<div class="section-title">Geographic Analysis</div>', unsafe_allow_html=True)
 
-with st.spinner("Loading Afghanistan map..."):
-    adm1 = load_geojson_adm1_geoboundaries()
-adm1 = prepare_geojson_for_matching(adm1)
+# Load GeoJSON (ADM1 + ADM2) using your requested function style
+with st.spinner("Loading boundary layers (ADM1 and ADM2)..."):
+    try:
+        adm1_geojson = fetch_geoboundaries_geojson("ADM1", simplified=True)  # provinces
+        adm2_geojson = fetch_geoboundaries_geojson("ADM2", simplified=True)  # districts
+        adm1_geojson = prepare_geojson_for_matching(adm1_geojson)
+        adm2_geojson = prepare_geojson_for_matching(adm2_geojson, name_candidates=("shapeName", "NAME_2", "NAME", "name"))
+    except Exception as e:
+        st.error(f"Map layers could not be loaded. {e}")
+        adm1_geojson = {"type": "FeatureCollection", "features": []}
+        adm2_geojson = {"type": "FeatureCollection", "features": []}
 
-if adm1.get("features"):
+# Province map (Afghanistan)
+if adm1_geojson.get("features"):
     prov_summary = filtered_df.groupby(["Province", "_prov_norm"], as_index=False).agg({
         "Total_Sample_Size":"sum",
         "Total_Checked":"sum",
@@ -527,9 +561,9 @@ if adm1.get("features"):
         0
     ).round(1)
 
-    fig_map = px.choropleth(
+    fig_afg = px.choropleth(
         prov_summary,
-        geojson=adm1,
+        geojson=adm1_geojson,
         locations="_prov_norm",
         featureidkey="properties.name_norm",
         color="Progress_Percentage",
@@ -547,11 +581,65 @@ if adm1.get("features"):
         range_color=[0, 100],
         title=""
     )
-    fig_map.update_geos(fitbounds="locations", visible=False)
-    fig_map.update_layout(height=520, margin=dict(l=0, r=0, t=10, b=0))
-    st.plotly_chart(fig_map, use_container_width=True)
+    fig_afg.update_geos(fitbounds="locations", visible=False)
+    fig_afg.update_layout(height=520, margin=dict(l=0, r=0, t=10, b=0))
+    st.plotly_chart(fig_afg, use_container_width=True)
 else:
-    st.warning("Map could not be loaded. Check outbound internet access on your hosting environment.")
+    st.warning("ADM1 map is not available (empty GeoJSON). Check outbound internet access.")
+
+# District map inside selected province
+st.markdown('<div class="section-title">Selected Province - District Level (ADM2)</div>', unsafe_allow_html=True)
+
+if selected_province != "All" and adm2_geojson.get("features"):
+    # Prepare district summary for the selected province only
+    df_prov = filtered_df[filtered_df["Province"] == selected_province].copy()
+
+    dist_summary = df_prov.groupby(["District", "_dist_norm"], as_index=False).agg({
+        "Total_Sample_Size":"sum",
+        "Total_Checked":"sum",
+        "Approved":"sum",
+        "Rejected":"sum",
+        "Pending":"sum"
+    })
+    dist_summary["Progress_Percentage"] = np.where(
+        dist_summary["Total_Sample_Size"] > 0,
+        (dist_summary["Total_Checked"] / dist_summary["Total_Sample_Size"]) * 100.0,
+        0
+    ).round(1)
+
+    # IMPORTANT:
+    # ADM2 polygons include province + district names. Some datasets store only district names,
+    # others store full names. We match by district name normalization via properties.name_norm.
+    fig_adm2 = px.choropleth(
+        dist_summary,
+        geojson=adm2_geojson,
+        locations="_dist_norm",
+        featureidkey="properties.name_norm",
+        color="Progress_Percentage",
+        hover_name="District",
+        hover_data={
+            "Progress_Percentage": ":.1f",
+            "Total_Sample_Size": ":,.0f",
+            "Total_Checked": ":,.0f",
+            "Approved": ":,.0f",
+            "Rejected": ":,.0f",
+            "Pending": ":,.0f",
+            "_dist_norm": False
+        },
+        color_continuous_scale="RdYlGn",
+        range_color=[0, 100],
+        title=""
+    )
+
+    # Fit map to the selected districts (if found)
+    fig_adm2.update_geos(fitbounds="locations", visible=False)
+    fig_adm2.update_layout(height=520, margin=dict(l=0, r=0, t=10, b=0))
+    st.plotly_chart(fig_adm2, use_container_width=True)
+
+elif selected_province == "All":
+    st.info("Select a Province from the sidebar to see district-level map.")
+else:
+    st.warning("ADM2 map is not available (empty GeoJSON).")
 
 # =========================
 # Charts (NO lowess)
