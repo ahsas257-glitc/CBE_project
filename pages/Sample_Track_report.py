@@ -103,9 +103,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# =========================
-# Header
-# =========================
 st.markdown('<div class="main-header">📊 Sample Track Analytics Dashboard</div>', unsafe_allow_html=True)
 
 # =========================
@@ -149,65 +146,247 @@ PROVINCE_HIERARCHY = {
 }
 
 # =========================
-# Sample Data Loader (respects hierarchy)
+# ✅ Google Sheets Config
 # =========================
-@st.cache_data
-def load_sample_data():
-    np.random.seed(42)
-    provinces = list(PROVINCE_HIERARCHY.keys())
+SPREADSHEET_KEY = "1lkztBZ4eG1BQx-52XgnA6w8YIiw-Sm85pTlQQziurfw"
+WORKSHEET_NAME = "Test"
 
-    rows = []
-    for _ in range(200):
-        province = np.random.choice(provinces)
-        region = PROVINCE_HIERARCHY[province]["region"]
-        district = np.random.choice(PROVINCE_HIERARCHY[province]["districts"])
+# =========================
+# Helpers
+# =========================
+def _standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    # Trim + unify common header variations
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
 
-        cbe_sample = np.random.randint(50, 500)
-        pb_sample  = np.random.randint(20, 300)
+    rename_map = {
+        "Disrtict": "District",
+        "Disrtict ": "District",
+        "District ": "District",
+        "Province ": "Province",
+        "Region ": "Region",
+        "Last Updated": "Last_Updated",
+        "Last_Updated ": "Last_Updated",
+        "CBE Sample Size": "CBE_Sample_Size",
+        "PB Sample Size": "PB_Sample_Size",
+        "Total Sample Size": "Total_Sample_Size",
+        "CBE Data Received": "CBE_Data_Received",
+        "PB Data Received": "PB_Data_Received",
+        "Total Received": "Total_Received",
+        "Total Checked": "Total_Checked",
+        "Progress Percentage": "Progress_Percentage",
+        "Progress Status": "Progress_Status",
+    }
+    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+    return df
 
-        cbe_received = int(cbe_sample * np.random.uniform(0.6, 1.0))
-        pb_received  = int(pb_sample  * np.random.uniform(0.5, 1.0))
+def _remove_total_rows(df: pd.DataFrame) -> pd.DataFrame:
+    # Remove rows where Province or District contains "Total" (case-insensitive)
+    df = df.copy()
+    for col in ["Province", "District", "Region"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
 
-        approved = int((cbe_received + pb_received) * np.random.uniform(0.3, 0.8))
-        pending  = int((cbe_received + pb_received) * np.random.uniform(0.1, 0.3))
-        rejected = int((cbe_received + pb_received) * np.random.uniform(0.05, 0.15))
-        not_checked = cbe_received + pb_received - approved - pending - rejected
+    if "Province" in df.columns:
+        df = df[~df["Province"].str.contains(r"\btotal\b", case=False, na=False)]
+    if "District" in df.columns:
+        df = df[~df["District"].str.contains(r"\btotal\b", case=False, na=False)]
+    return df
 
-        total_checked = approved + pending + rejected
-        total_sample  = cbe_sample + pb_sample
+def _force_hierarchy(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    اگر در شیت Region اشتباه باشد، ما بر اساس Province آن را درست می‌کنیم.
+    اگر District خارج از لیست همان ولایت باشد، (اختیاری) حذف می‌کنیم تا دیتا پاک باشد.
+    """
+    df = df.copy()
 
-        progress = int((total_checked / total_sample) * 100) if total_sample > 0 else 0
-        remaining = total_sample - total_checked
+    # Force Region from mapping (if Province exists)
+    if "Province" in df.columns:
+        df["Region"] = df["Province"].map(lambda p: PROVINCE_HIERARCHY.get(p, {}).get("region", None)).fillna(
+            df["Region"] if "Region" in df.columns else "Unknown"
+        )
 
-        rows.append({
-            "Region": region,
-            "Province": province,
-            "District": district,
+        # Optional: keep only valid districts under each province
+        if "District" in df.columns:
+            def _is_valid(row):
+                p = row["Province"]
+                d = row["District"]
+                valid = PROVINCE_HIERARCHY.get(p, {}).get("districts", None)
+                if not valid:
+                    return True
+                return d in valid
 
-            "CBE_Sample_Size": cbe_sample,
-            "PB_Sample_Size": pb_sample,
-            "Total_Sample_Size": total_sample,
+            df = df[df.apply(_is_valid, axis=1)]
 
-            "CBE_Data_Received": cbe_received,
-            "PB_Data_Received": pb_received,
-            "Total_Received": cbe_received + pb_received,
+    return df
 
-            "Approved": approved,
-            "Pending": pending,
-            "Rejected": rejected,
-            "Not_Checked": not_checked,
+def _to_numeric(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    df = df.copy()
+    for c in cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    return df
 
-            "Total_Checked": total_checked,
-            "Remaining": remaining,
-            "Progress_Percentage": min(progress, 100),
-            "Progress_Status": "On Track" if progress >= 70 else "Behind Schedule" if progress >= 40 else "Critical",
-            "Enumerators": np.random.randint(1, 10),
-            "Last_Updated": pd.Timestamp.now() - pd.Timedelta(days=np.random.randint(0, 30))
-        })
+def _ensure_last_updated(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if "Last_Updated" in df.columns:
+        df["Last_Updated"] = pd.to_datetime(df["Last_Updated"], errors="coerce")
+        df["Last_Updated"] = df["Last_Updated"].fillna(pd.Timestamp.now())
+    else:
+        df["Last_Updated"] = pd.Timestamp.now()
+    return df
 
-    return pd.DataFrame(rows)
+def _compute_missing_fields(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    اگر برخی ستون‌ها در شیت شما نباشد، اینجا محاسبه می‌کنیم تا داشبورد خراب نشود.
+    """
+    df = df.copy()
 
-df = load_sample_data()
+    # Required numeric columns that dashboard uses
+    num_cols = [
+        "CBE_Sample_Size","PB_Sample_Size","Total_Sample_Size",
+        "CBE_Data_Received","PB_Data_Received","Total_Received",
+        "Approved","Pending","Rejected","Not_Checked",
+        "Total_Checked","Remaining","Progress_Percentage","Enumerators"
+    ]
+    for c in num_cols:
+        if c not in df.columns:
+            df[c] = 0
+
+    df = _to_numeric(df, num_cols)
+
+    # Total_Sample_Size
+    if (df["Total_Sample_Size"] == 0).all():
+        df["Total_Sample_Size"] = df["CBE_Sample_Size"] + df["PB_Sample_Size"]
+
+    # Total_Received
+    if (df["Total_Received"] == 0).all():
+        df["Total_Received"] = df["CBE_Data_Received"] + df["PB_Data_Received"]
+
+    # Total_Checked
+    if (df["Total_Checked"] == 0).all():
+        df["Total_Checked"] = df["Approved"] + df["Pending"] + df["Rejected"]
+
+    # Not_Checked
+    if (df["Not_Checked"] == 0).all():
+        df["Not_Checked"] = np.maximum(df["Total_Received"] - (df["Approved"] + df["Pending"] + df["Rejected"]), 0)
+
+    # Remaining
+    df["Remaining"] = np.maximum(df["Total_Sample_Size"] - df["Total_Checked"], 0)
+
+    # Progress_Percentage
+    df["Progress_Percentage"] = np.where(
+        df["Total_Sample_Size"] > 0,
+        (df["Total_Checked"] / df["Total_Sample_Size"] * 100).round(1),
+        0
+    )
+    df["Progress_Percentage"] = df["Progress_Percentage"].clip(0, 100)
+
+    # Progress_Status
+    df["Progress_Status"] = df["Progress_Percentage"].apply(
+        lambda x: "On Track" if x >= 70 else "Behind Schedule" if x >= 40 else "Critical"
+    )
+
+    # Enumerators default
+    if (df["Enumerators"] == 0).all():
+        df["Enumerators"] = 1
+
+    return df
+
+# =========================
+# ✅ Load Data from Google Sheet "Test"
+# =========================
+@st.cache_data(ttl=300)
+def load_actual_data():
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    # IMPORTANT:
+    # 1) در Streamlit secrets باید gcp_service_account را اضافه کنی
+    # 2) شیت را با ایمیل service account شریک بسازی (Editor یا Viewer)
+    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+    client = gspread.authorize(creds)
+
+    sh = client.open_by_key(SPREADSHEET_KEY)
+    ws = sh.worksheet(WORKSHEET_NAME)
+
+    data = ws.get_all_records()
+    df = pd.DataFrame(data)
+
+    df = _standardize_columns(df)
+    df = _remove_total_rows(df)
+    df = _force_hierarchy(df)
+    df = _ensure_last_updated(df)
+    df = _compute_missing_fields(df)
+
+    # Ensure core columns exist
+    for c in ["Region","Province","District"]:
+        if c not in df.columns:
+            df[c] = "Unknown"
+
+    # Trim text
+    df["Region"] = df["Region"].astype(str).str.strip()
+    df["Province"] = df["Province"].astype(str).str.strip()
+    df["District"] = df["District"].astype(str).str.strip()
+
+    return df
+
+# =========================
+# Data Source selector
+# =========================
+st.sidebar.markdown("## 🧩 Data Source")
+use_google_sheet = st.sidebar.checkbox("Use Google Sheet (Test)", value=True)
+
+if use_google_sheet:
+    try:
+        df = load_actual_data()
+    except Exception as e:
+        st.error("❌ اتصال به Google Sheet موفق نشد. لطفاً موارد زیر را چک کنید:")
+        st.markdown("""
+- در Streamlit Cloud → Settings → Secrets باید کلید **gcp_service_account** را اضافه کرده باشید.
+- شیت را با ایمیل Service Account شریک ساخته باشید (Share).
+- نام ورک‌شیت دقیقاً **Test** باشد.
+""")
+        st.code(str(e))
+        st.stop()
+else:
+    # Fallback sample data (اختیاری)
+    @st.cache_data
+    def load_sample_data():
+        np.random.seed(42)
+        provinces = list(PROVINCE_HIERARCHY.keys())
+        rows = []
+        for _ in range(200):
+            province = np.random.choice(provinces)
+            region = PROVINCE_HIERARCHY[province]["region"]
+            district = np.random.choice(PROVINCE_HIERARCHY[province]["districts"])
+            cbe_sample = np.random.randint(50, 500)
+            pb_sample  = np.random.randint(20, 300)
+            cbe_received = int(cbe_sample * np.random.uniform(0.6, 1.0))
+            pb_received  = int(pb_sample  * np.random.uniform(0.5, 1.0))
+            approved = int((cbe_received + pb_received) * np.random.uniform(0.3, 0.8))
+            pending  = int((cbe_received + pb_received) * np.random.uniform(0.1, 0.3))
+            rejected = int((cbe_received + pb_received) * np.random.uniform(0.05, 0.15))
+            not_checked = cbe_received + pb_received - approved - pending - rejected
+            total_checked = approved + pending + rejected
+            total_sample  = cbe_sample + pb_sample
+            progress = int((total_checked / total_sample) * 100) if total_sample > 0 else 0
+            remaining = total_sample - total_checked
+            rows.append({
+                "Region": region, "Province": province, "District": district,
+                "CBE_Sample_Size": cbe_sample, "PB_Sample_Size": pb_sample, "Total_Sample_Size": total_sample,
+                "CBE_Data_Received": cbe_received, "PB_Data_Received": pb_received, "Total_Received": cbe_received + pb_received,
+                "Approved": approved, "Pending": pending, "Rejected": rejected, "Not_Checked": not_checked,
+                "Total_Checked": total_checked, "Remaining": remaining,
+                "Progress_Percentage": min(progress, 100),
+                "Progress_Status": "On Track" if progress >= 70 else "Behind Schedule" if progress >= 40 else "Critical",
+                "Enumerators": np.random.randint(1, 10),
+                "Last_Updated": pd.Timestamp.now() - pd.Timedelta(days=np.random.randint(0, 30))
+            })
+        return pd.DataFrame(rows)
+
+    df = load_sample_data()
 
 # =========================
 # Sidebar Filters
@@ -304,7 +483,7 @@ with col2:
     <div class="metric-card">
         <div class="kpi-label">OVERALL PROGRESS</div>
         <div class="kpi-value">{overall_progress:.1f}%</div>
-        <div class="kpi-change positive">✅ {total_checked:,.0f} Checked | ⏳ {total_sample - total_checked:,.0f} Remaining</div>
+        <div class="kpi-change positive">✅ {total_checked:,.0f} Checked | ⏳ {max(total_sample - total_checked, 0):,.0f} Remaining</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -340,7 +519,7 @@ with tab1:
     fig1 = go.Figure()
     fig1.add_trace(go.Indicator(
         mode="gauge+number",
-        value=overall_progress,
+        value=float(overall_progress),
         title={'text': "Overall Progress"},
         gauge={
             'axis': {'range': [None, 100]},
@@ -482,7 +661,6 @@ with c1:
 
 with c2:
     st.markdown("##### 📊 Performance Metrics by District")
-
     metric_option = st.selectbox(
         "Select Metric for District Ranking",
         ["Progress_Percentage", "Approved", "Rejected", "Pending", "Total_Checked"]
@@ -525,24 +703,8 @@ with c2:
 st.markdown('<div class="section-header">🎯 Target Achievement Analysis</div>', unsafe_allow_html=True)
 
 target_analysis = filtered_df.copy()
-target_analysis["Achievement_Rate"] = np.where(
-    target_analysis["Total_Sample_Size"] > 0,
-    (target_analysis["Total_Checked"] / target_analysis["Total_Sample_Size"] * 100).round(1),
-    0
-)
-target_analysis["Approval_Rate"] = np.where(
-    target_analysis["Total_Checked"] > 0,
-    (target_analysis["Approved"] / target_analysis["Total_Checked"] * 100).round(1),
-    0
-)
-target_analysis["Rejection_Rate"] = np.where(
-    target_analysis["Total_Checked"] > 0,
-    (target_analysis["Rejected"] / target_analysis["Total_Checked"] * 100).round(1),
-    0
-)
 
 fig6 = go.Figure()
-
 if not target_analysis.empty:
     fig6.add_trace(go.Scatter(
         x=target_analysis["Total_Sample_Size"],
@@ -582,7 +744,6 @@ fig6.update_layout(
     hovermode="closest",
     height=500
 )
-
 st.plotly_chart(fig6, use_container_width=True)
 
 # =========================
@@ -714,29 +875,3 @@ if auto_refresh:
     refresh_rate = st.sidebar.slider("Refresh rate (seconds)", 30, 300, 60)
     st.sidebar.caption(f"Next refresh in {refresh_rate} seconds")
     st.rerun()
-
-# =========================
-# Note: Google Sheets integration example (optional)
-# =========================
-"""
-@st.cache_data(ttl=300)
-def load_actual_data():
-    import gspread
-    from google.oauth2.service_account import Credentials
-
-    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-
-    client = gspread.authorize(creds)
-    spreadsheet = client.open_by_key("YOUR_SPREADSHEET_KEY")
-    worksheet = spreadsheet.worksheet("Sample_Track")
-
-    data = worksheet.get_all_records()
-    df = pd.DataFrame(data)
-
-    # ✅ Optional: force correct Region/District based on mapping
-    # df["Region"] = df["Province"].map(lambda p: PROVINCE_HIERARCHY.get(p, {}).get("region", df.get("Region")))
-    # ... more cleaning ...
-
-    return df
-"""
